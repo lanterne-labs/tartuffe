@@ -326,11 +326,22 @@ func (s *PostgresStorer) BotTagPool(ctx context.Context, c *BotContradiction, do
 	return pool, nil
 }
 
-// XPost is a tweet of the X bot (x_posts).
+// The kinds of a tweet of the bot: a contradiction of a candidate, or a call
+// to the vote.
+const (
+	XPostContradiction = "contradiction"
+	XPostVote          = "vote"
+)
+
+// XPost is a tweet of the X bot (x_posts). A tweet on the vote has no
+// contradiction and no person (PersonID 0). QuoteTweetID is the tweet of the
+// person it quotes, when one of the two facts is that tweet.
 type XPost struct {
 	ID                int64
+	Kind              string
 	ContradictionID   *int64
 	PersonID          int64
+	QuoteTweetID      *string
 	Slot              time.Time
 	Variants          []string
 	Tags              []string
@@ -342,11 +353,11 @@ type XPost struct {
 	CreatedAt         time.Time
 }
 
-const xPostColumns = `id, contradiction_id, person_id, slot, variants, tags, chosen, status, telegram_message_id, tweet_id, error, created_at`
+const xPostColumns = `id, kind, contradiction_id, COALESCE(person_id, 0), quote_tweet_id, slot, variants, tags, chosen, status, telegram_message_id, tweet_id, error, created_at`
 
 func scanXPost(row pgx.CollectableRow) (XPost, error) {
 	var p XPost
-	err := row.Scan(&p.ID, &p.ContradictionID, &p.PersonID, &p.Slot, &p.Variants, &p.Tags, &p.Chosen, &p.Status,
+	err := row.Scan(&p.ID, &p.Kind, &p.ContradictionID, &p.PersonID, &p.QuoteTweetID, &p.Slot, &p.Variants, &p.Tags, &p.Chosen, &p.Status,
 		&p.TelegramMessageID, &p.TweetID, &p.Error, &p.CreatedAt)
 	return p, err
 }
@@ -362,11 +373,14 @@ func (s *PostgresStorer) InsertXPost(ctx context.Context, p XPost) (int64, error
 	if p.Tags == nil {
 		p.Tags = []string{}
 	}
+	if p.Kind == "" {
+		p.Kind = XPostContradiction
+	}
 	var id int64
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO x_posts (contradiction_id, person_id, slot, variants, tags, status)
-		VALUES ($1, $2, $3, $4, $5, 'draft') RETURNING id`,
-		p.ContradictionID, p.PersonID, p.Slot, p.Variants, p.Tags).Scan(&id)
+		INSERT INTO x_posts (kind, contradiction_id, person_id, quote_tweet_id, slot, variants, tags, status)
+		VALUES ($1, $2, NULLIF($3, 0), $4, $5, $6, $7, 'draft') RETURNING id`,
+		p.Kind, p.ContradictionID, p.PersonID, p.QuoteTweetID, p.Slot, p.Variants, p.Tags).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert x post: %w", err)
 	}
@@ -416,11 +430,21 @@ func (s *PostgresStorer) XPostSlotTaken(ctx context.Context, slot time.Time) (bo
 // OpenXPostPersons returns the persons of the drafts and approved tweets not
 // posted yet: a new draft is about someone else.
 func (s *PostgresStorer) OpenXPostPersons(ctx context.Context) ([]int64, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT person_id FROM x_posts WHERE status IN ('draft', 'approved')`)
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT person_id FROM x_posts WHERE status IN ('draft', 'approved') AND person_id IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("open x post persons: %w", err)
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[int64])
+}
+
+// CountXPosts counts the tweets of a kind, whatever their status: the vote
+// tweets take their text in turn by it.
+func (s *PostgresStorer) CountXPosts(ctx context.Context, kind string) (int, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM x_posts WHERE kind = $1`, kind).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count x posts: %w", err)
+	}
+	return n, nil
 }
 
 // SetXPostTelegram records the Telegram message that shows the draft.

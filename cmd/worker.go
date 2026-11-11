@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -159,6 +160,12 @@ func startXBot(ctx context.Context, storer *storage.PostgresStorer) error {
 			}
 			return false, nil
 		}}
+	if bot.Vote, err = botVote(events); err != nil {
+		return err
+	}
+	if bot.Vote == nil {
+		log.Warn().Msg("Worker: no XBOT_VOTE_POLLS: the X bot tweets nothing about the vote")
+	}
 	if p := xbot.NewXAPIPosterFromEnv(); p != nil {
 		bot.Poster = p
 	} else {
@@ -170,4 +177,50 @@ func startXBot(ctx context.Context, storer *storage.PostgresStorer) error {
 	log.Info().Int("slots", len(bot.Slots)).Bool("link", bot.Link).Msg("Worker: X bot started")
 	go bot.Run(ctx)
 	return nil
+}
+
+// botVote gives the X bot the vote it tweets about: the first featured event
+// open at t that XBOT_VOTE_POLLS names ("slug:id,…", the isoloir poll of each
+// event, as the frontend's VITE_VOTE_POLLS), with the ballots its latest
+// tally counted on the mirror (XBOT_VOTE_MIRROR, default the site's). Nil
+// without XBOT_VOTE_POLLS.
+func botVote(events *polls.PGStore) (func(ctx context.Context, t time.Time) (*xbot.VoteState, error), error) {
+	ids := map[string]int{}
+	for _, pair := range strings.Split(os.Getenv("XBOT_VOTE_POLLS"), ",") {
+		if pair = strings.TrimSpace(pair); pair == "" {
+			continue
+		}
+		slug, id, ok := strings.Cut(pair, ":")
+		n, err := strconv.Atoi(id)
+		if !ok || err != nil {
+			return nil, fmt.Errorf("XBOT_VOTE_POLLS %q: want slug:id", pair)
+		}
+		ids[slug] = n
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	mirror := os.Getenv("XBOT_VOTE_MIRROR")
+	if mirror == "" {
+		mirror = "https://vote.tartuffe.me/vote-data"
+	}
+	return func(ctx context.Context, t time.Time) (*xbot.VoteState, error) {
+		list, err := events.ListEvents(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for i := range list {
+			e := &list[i]
+			id, ok := ids[e.Slug]
+			if !ok || !e.Featured || !polls.IsOpen(e, t) {
+				continue
+			}
+			counted, err := xbot.CountedBallots(ctx, mirror, id)
+			if err != nil {
+				return nil, err
+			}
+			return &xbot.VoteState{Slug: e.Slug, MaxChoices: e.MaxChoices, MinVoters: e.MinVoters, Counted: counted}, nil
+		}
+		return nil, nil
+	}, nil
 }

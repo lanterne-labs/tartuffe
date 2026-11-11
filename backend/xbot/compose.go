@@ -51,6 +51,9 @@ type Draft struct {
 	Labels        []string
 	Dropped       []string
 	Reasoning     string
+	// QuoteID and QuoteLink are the person's own tweet the tweet quotes
+	// ("": none).
+	QuoteID, QuoteLink string
 }
 
 // Domains returns the sites of the facts' sources, without "www.", once each.
@@ -169,7 +172,7 @@ func Prompt(c *storage.BotContradiction, room int) string {
 		fields = append(fields, fmt.Sprintf("%q: \"<the %s tweet>\"", st.Key, st.Key))
 	}
 	keys := strings.Join(fields, ", ")
-	return fmt.Sprintf(`You write tweets in French for an anonymous X account that exposes the contradictions of French presidential candidates. Each tweet points at one contradiction that our site found between two things the same person said or did.
+	return fmt.Sprintf(`You write tweets in French for the X account of Lanterne Labs, the publisher of tartuffe.me, a site that sets what French presidential candidates said beside what they said or did later. Each tweet points at one contradiction the site found between two things the same person said or did.
 
 Person: %s
 Subject: %s

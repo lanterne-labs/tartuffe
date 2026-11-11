@@ -39,7 +39,11 @@ type Bot struct {
 	// the day of a round): no tweet then.
 	Silence func(ctx context.Context, t time.Time) (bool, error)
 	Slots   []Clock
-	Zone    *time.Location
+	// VoteSlots are the slots of the tweets on the vote; Vote gives the open
+	// vote at t (nil: none, no vote tweet).
+	VoteSlots []Clock
+	Vote      func(ctx context.Context, t time.Time) (*VoteState, error)
+	Zone      *time.Location
 	// Lead is how long before its slot a draft is sent; Grace how long after
 	// its slot a draft may still be approved.
 	Lead, Grace time.Duration
@@ -51,7 +55,8 @@ type Bot struct {
 }
 
 // Config is the bot's settings from the environment: XBOT_SLOTS (default
-// "12:00,19:00", Europe/Paris), XBOT_LINK (default false), XBOT_SITE.
+// "12:00,19:00", Europe/Paris), XBOT_VOTE_SLOTS (default "09:00,16:00";
+// "none": no vote tweet), XBOT_LINK (default false), XBOT_SITE.
 func (b *Bot) Config() error {
 	zone, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
@@ -62,13 +67,22 @@ func (b *Bot) Config() error {
 	if slots == "" {
 		slots = "12:00,19:00"
 	}
-	b.Slots = nil
-	for _, s := range strings.Split(slots, ",") {
-		t, err := time.Parse("15:04", strings.TrimSpace(s))
-		if err != nil {
-			return fmt.Errorf("XBOT_SLOTS %q: %w", s, err)
+	if b.Slots, err = parseSlots("XBOT_SLOTS", slots); err != nil {
+		return err
+	}
+	voteSlots := os.Getenv("XBOT_VOTE_SLOTS")
+	if voteSlots == "" {
+		voteSlots = "09:00,16:00"
+	}
+	if b.VoteSlots, err = parseSlots("XBOT_VOTE_SLOTS", voteSlots); err != nil {
+		return err
+	}
+	for _, v := range b.VoteSlots {
+		for _, c := range b.Slots {
+			if v == c {
+				return fmt.Errorf("XBOT_VOTE_SLOTS: %02d:%02d is also a slot of XBOT_SLOTS", v.Hour, v.Min)
+			}
 		}
-		b.Slots = append(b.Slots, Clock{t.Hour(), t.Minute()})
 	}
 	b.Link, _ = strconv.ParseBool(os.Getenv("XBOT_LINK"))
 	b.Site = os.Getenv("XBOT_SITE")
@@ -85,6 +99,22 @@ func (b *Bot) Config() error {
 		b.Now = time.Now
 	}
 	return nil
+}
+
+// parseSlots reads times of day ("12:00,19:00"); "none" is no slot.
+func parseSlots(name, list string) ([]Clock, error) {
+	if strings.TrimSpace(list) == "none" {
+		return nil, nil
+	}
+	var out []Clock
+	for _, s := range strings.Split(list, ",") {
+		t, err := time.Parse("15:04", strings.TrimSpace(s))
+		if err != nil {
+			return nil, fmt.Errorf("%s %q: %w", name, s, err)
+		}
+		out = append(out, Clock{t.Hour(), t.Minute()})
+	}
+	return out, nil
 }
 
 // Run serves the bot until ctx ends: the chat's taps and replies as they
@@ -122,13 +152,13 @@ func sleep(ctx context.Context, d time.Duration) {
 	}
 }
 
-// nextSlots returns the slots in [from, to).
-func (b *Bot) nextSlots(from, to time.Time) []time.Time {
+// nextSlots returns the times of the slots in [from, to).
+func (b *Bot) nextSlots(slots []Clock, from, to time.Time) []time.Time {
 	var out []time.Time
 	day := from.In(b.Zone)
 	for d := 0; d < 3; d++ {
 		y, m, dd := day.AddDate(0, 0, d).Date()
-		for _, c := range b.Slots {
+		for _, c := range slots {
 			t := time.Date(y, m, dd, c.Hour, c.Min, 0, 0, b.Zone)
 			if !t.Before(from) && t.Before(to) {
 				out = append(out, t)
@@ -142,7 +172,29 @@ func (b *Bot) nextSlots(from, to time.Time) []time.Time {
 // came, and expires the drafts past their grace.
 func (b *Bot) Tick(ctx context.Context) error {
 	now := b.Now()
-	for _, slot := range b.nextSlots(now, now.Add(b.Lead)) {
+	if err := b.draftSlots(ctx, b.Slots, now, b.Draft); err != nil {
+		return err
+	}
+	if err := b.draftSlots(ctx, b.VoteSlots, now, b.DraftVote); err != nil {
+		return err
+	}
+	if err := b.PostDue(ctx); err != nil {
+		return err
+	}
+	expired, err := b.Store.ExpireXPosts(ctx, now.Add(-b.Grace))
+	if err != nil {
+		return err
+	}
+	for _, p := range expired {
+		b.closeMessage(ctx, &p, "⏱ Expiré : pas de décision à temps, rien n'a été publié.")
+	}
+	return nil
+}
+
+// draftSlots drafts the slots due within Lead that hold no tweet yet and are
+// not under the electoral silence.
+func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, draft func(context.Context, time.Time) error) error {
+	for _, slot := range b.nextSlots(slots, now, now.Add(b.Lead)) {
 		taken, err := b.Store.XPostSlotTaken(ctx, slot)
 		if err != nil {
 			return err
@@ -159,23 +211,13 @@ func (b *Bot) Tick(ctx context.Context) error {
 				continue
 			}
 		}
-		if err := b.Draft(ctx, slot); err != nil {
+		if err := draft(ctx, slot); err != nil {
 			if errors.Is(err, llm.ErrUnavailable) {
 				log.Warn().Err(err).Time("slot", slot).Msg("xbot: LLM unavailable; the draft waits for the next tick")
 				break
 			}
 			return fmt.Errorf("draft for %s: %w", slot, err)
 		}
-	}
-	if err := b.PostDue(ctx); err != nil {
-		return err
-	}
-	expired, err := b.Store.ExpireXPosts(ctx, now.Add(-b.Grace))
-	if err != nil {
-		return err
-	}
-	for _, p := range expired {
-		b.closeMessage(ctx, &p, "⏱ Expiré : pas de décision à temps, rien n'a été publié.")
 	}
 	return nil
 }
@@ -210,8 +252,12 @@ func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 			log.Warn().Int64("contradiction", c.ID).Strs("dropped", d.Dropped).Msg("xbot: no version passed the checks")
 			continue
 		}
+		var quote *string
+		if d.QuoteID, d.QuoteLink = QuoteTarget(c, pool.Person); d.QuoteID != "" {
+			quote = &d.QuoteID
+		}
 		cid := c.ID
-		id, err := b.Store.InsertXPost(ctx, storage.XPost{ContradictionID: &cid, PersonID: c.PersonID, Slot: slot, Variants: d.Versions, Tags: d.Tags})
+		id, err := b.Store.InsertXPost(ctx, storage.XPost{ContradictionID: &cid, PersonID: c.PersonID, QuoteTweetID: quote, Slot: slot, Variants: d.Versions, Tags: d.Tags})
 		if err != nil {
 			return err
 		}
@@ -269,6 +315,9 @@ func DraftMessage(d *Draft, slot time.Time, site string) string {
 	side("Fait 1", c.A)
 	side("Fait 2", c.B)
 	fmt.Fprintf(&b, "<b>Pourquoi</b> : %s\n<a href=\"%s\">sur le site</a>\n", esc(c.Reason), esc(ContradictionLink(site, &c)))
+	if d.QuoteLink != "" {
+		fmt.Fprintf(&b, "🔁 Le tweet citera <a href=\"%s\">son propre tweet</a>.\n", esc(d.QuoteLink))
+	}
 	for i, v := range d.Versions {
 		fmt.Fprintf(&b, "\n<b>%s</b> (%d car.)\n<pre>%s</pre>\n", esc(label(d, i)), Length(v), esc(v))
 	}
@@ -417,7 +466,11 @@ func (b *Bot) PostDue(ctx context.Context) error {
 				return err
 			}
 		}
-		id, err := b.Poster.Post(ctx, *p.Chosen)
+		quote := ""
+		if p.QuoteTweetID != nil {
+			quote = *p.QuoteTweetID
+		}
+		id, err := b.Poster.Post(ctx, *p.Chosen, quote)
 		if err != nil {
 			log.Error().Err(err).Int64("post", p.ID).Msg("xbot: posting failed")
 			if merr := b.Store.MarkXPostFailed(ctx, p.ID, err.Error()); merr != nil {

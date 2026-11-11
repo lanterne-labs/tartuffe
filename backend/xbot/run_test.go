@@ -51,10 +51,11 @@ func (f *fakeTelegram) last(method string) map[string]any {
 	return nil
 }
 
-type fakePoster struct{ posted []string }
+type fakePoster struct{ posted, quoted []string }
 
-func (p *fakePoster) Post(_ context.Context, text string) (string, error) {
+func (p *fakePoster) Post(_ context.Context, text, quote string) (string, error) {
 	p.posted = append(p.posted, text)
+	p.quoted = append(p.quoted, quote)
 	return "99", nil
 }
 
@@ -203,4 +204,60 @@ func TestBotReplyAndExpiry(t *testing.T) {
 	var n int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_posts`).Scan(&n))
 	assert.Equal(t, 2, n, "no draft during the silence")
+}
+
+// TestBotVoteTweet: a vote slot drafts the call to vote, a tap publishes it
+// at its slot; it quotes nothing and tags nobody; without an open vote the
+// slot is left. A contradiction whose fact is the person's own tweet is
+// posted as a quote of it.
+func TestBotVoteTweet(t *testing.T) {
+	b, tg, poster, pool := testBot(t)
+	ctx := context.Background()
+	start := b.Now() // 11:30
+	b.VoteSlots = []Clock{{9, 0}, {16, 0}}
+	open := true
+	b.Vote = func(context.Context, time.Time) (*VoteState, error) {
+		if !open {
+			return nil, nil
+		}
+		return &VoteState{Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 50, Counted: 301}, nil
+	}
+	_, err := pool.Exec(ctx, `UPDATE fact_sources SET source_url = 'https://x.com/jdupont/status/555' WHERE fact_id = 2`)
+	require.NoError(t, err)
+
+	// 11:30: the noon contradiction draft only.
+	require.NoError(t, b.Tick(ctx))
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "p:1:1", MessageID: 1}))
+	b.Now = func() time.Time { return start.Add(31 * time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	require.Len(t, poster.posted, 1)
+	assert.Equal(t, "555", poster.quoted[0], "the person's own tweet is quoted")
+
+	// 15:10: the 16:00 vote draft.
+	b.Now = func() time.Time { return start.Add(3*time.Hour + 40*time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	msg := tg.last("sendMessage")
+	assert.Contains(t, msg["text"], "Tweet du vote")
+	assert.Contains(t, msg["text"], "301 bulletins")
+	assert.Contains(t, msg["text"], "seuil de 300")
+	var kind string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT kind FROM x_posts WHERE id = 2`).Scan(&kind))
+	assert.Equal(t, "vote", kind)
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c2", Data: "p:2:1", MessageID: 2}))
+	b.Now = func() time.Time { return start.Add(4*time.Hour + 31*time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	require.Len(t, poster.posted, 2)
+	assert.Contains(t, poster.posted[1], "https://tartuffe.me/election/presidentielle-2027")
+	assert.Contains(t, poster.posted[1], "Déjà 301 bulletins.")
+	assert.NotContains(t, poster.posted[1], "@")
+	assert.Empty(t, poster.quoted[1])
+	assert.Equal(t, "posted", postStatus(t, pool, 2))
+
+	// The next morning, no open vote: no draft for 09:00.
+	open = false
+	b.Now = func() time.Time { return start.Add(20*time.Hour + 40*time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	var votes int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_posts WHERE kind = 'vote'`).Scan(&votes))
+	assert.Equal(t, 1, votes)
 }

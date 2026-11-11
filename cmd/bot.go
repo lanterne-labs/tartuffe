@@ -12,6 +12,7 @@ import (
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/polls"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/xbot"
 
@@ -36,6 +37,7 @@ var (
 	botDraftSite string
 	botDraftID   int64
 	botDraftTG   bool
+	botDraftVote bool
 )
 
 var botDraftCmd = &cobra.Command{
@@ -48,6 +50,33 @@ var botDraftCmd = &cobra.Command{
 			return err
 		}
 		defer store.Close()
+		if botDraftVote {
+			vote, err := botVote(polls.NewPGStore(store.Pool()))
+			if err != nil {
+				return err
+			}
+			if vote == nil {
+				return fmt.Errorf("--vote: XBOT_VOTE_POLLS is not set (slug:id)")
+			}
+			v, err := vote(ctx, time.Now())
+			if err != nil {
+				return err
+			}
+			if v == nil {
+				fmt.Println("no open featured vote: no vote tweet")
+				return nil
+			}
+			n, err := store.CountXPosts(ctx, storage.XPostVote)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s: %d ballots counted (results may be tweeted from %d)\n", v.Slug, v.Counted, xbot.StandingsFrom)
+			for i := 0; i < botDraftN; i++ {
+				t := xbot.VoteTweet(v, n+i, botDraftSite)
+				fmt.Printf("--- (%d chars)\n%s\n", xbot.Length(t), t)
+			}
+			return nil
+		}
 		writer, err := xbot.NewLLMWriterFromEnv()
 		if err != nil {
 			return fmt.Errorf("init LLM: %w", err)
@@ -84,6 +113,7 @@ var botDraftCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			d.QuoteID, d.QuoteLink = xbot.QuoteTarget(&c, pool.Person)
 			printDraft(d)
 			if tg != nil {
 				msg := "🔎 <b>APERÇU</b>, rien ne sera publié\n\n" + xbot.DraftMessage(d, time.Now(), botDraftSite)
@@ -114,6 +144,9 @@ func printDraft(d *xbot.Draft) {
 	fmt.Printf("B (%s): %s\n", day(c.B), c.B.Text)
 	fmt.Printf("why: %s\n", c.Reason)
 	fmt.Printf("tags: %s\n", strings.Join(d.Tags, " "))
+	if d.QuoteLink != "" {
+		fmt.Printf("quotes: %s\n", d.QuoteLink)
+	}
 	for i, v := range d.Versions {
 		fmt.Printf("--- %s (%d chars)\n%s\n", d.Labels[i], xbot.Length(v), v)
 	}
@@ -295,6 +328,7 @@ func init() {
 	botDraftCmd.Flags().IntVar(&botDraftN, "n", 5, "how many drafts (one per person)")
 	botDraftCmd.Flags().Int64Var(&botDraftID, "contradiction", 0, "draft this contradiction instead of choosing")
 	botDraftCmd.Flags().BoolVar(&botDraftLink, "link", false, "add the contradiction's link (X bills a tweet with a link more)")
+	botDraftCmd.Flags().BoolVar(&botDraftVote, "vote", false, "show the next tweets on the vote instead (--n of them; needs XBOT_VOTE_POLLS)")
 	botDraftCmd.Flags().BoolVar(&botDraftTG, "telegram", false, "also send each draft to Telegram as a preview (no buttons, nothing saved)")
 	botDraftCmd.Flags().StringVar(&botDraftSite, "site", "https://tartuffe.me", "the site of the links")
 	botAccountsListCmd.Flags().StringVar(&botAccountsStatus, "status", "", "suggested, approved or refused (default all)")

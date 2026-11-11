@@ -20,9 +20,10 @@ import (
 	"time"
 )
 
-// Poster posts a tweet and returns its id.
+// Poster posts a tweet and returns its id. quote is the id of the tweet it
+// quotes ("": none).
 type Poster interface {
-	Post(ctx context.Context, text string) (string, error)
+	Post(ctx context.Context, text, quote string) (string, error)
 }
 
 // XAPIPoster posts with the official X API (pay per use), as the account
@@ -106,8 +107,12 @@ func (p *XAPIPoster) authorization(method, endpoint string, signed map[string]st
 	return "OAuth " + strings.Join(parts, ", ")
 }
 
-func (p *XAPIPoster) Post(ctx context.Context, text string) (string, error) {
-	body, err := json.Marshal(map[string]string{"text": text})
+func (p *XAPIPoster) Post(ctx context.Context, text, quote string) (string, error) {
+	payload := map[string]string{"text": text}
+	if quote != "" {
+		payload["quote_tweet_id"] = quote
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}

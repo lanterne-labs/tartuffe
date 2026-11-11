@@ -127,3 +127,42 @@ func TestDatesAndLink(t *testing.T) {
 	c.PersonSlug = "jean-dupont"
 	assert.Equal(t, "https://tartuffe.me/person/jean-dupont?c=7", ContradictionLink("https://tartuffe.me/", c))
 }
+
+func TestQuoteTarget(t *testing.T) {
+	c := contradiction()
+	// The source of fact A is a tweet, but of nobody we know as the person.
+	id, _ := QuoteTarget(c, []string{"jdupont"})
+	assert.Empty(t, id, "a tweet of another account is never quoted")
+	c.A.SourceURLs = []string{"https://www.lemonde.fr/a", "https://twitter.com/JDupont/status/111?s=20"}
+	id, link := QuoteTarget(c, []string{"jdupont"})
+	assert.Equal(t, "111", id)
+	assert.Equal(t, "https://x.com/JDupont/status/111", link)
+	// The later fact goes first; a profile link is not a tweet.
+	c.B.SourceURLs = []string{"https://x.com/jdupont", "https://x.com/jdupont/status/222"}
+	id, _ = QuoteTarget(c, []string{"jdupont"})
+	assert.Equal(t, "222", id)
+	id, _ = QuoteTarget(c, nil)
+	assert.Empty(t, id)
+}
+
+func TestVoteTweet(t *testing.T) {
+	v := &VoteState{Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 50, Counted: 2}
+	seen := map[string]bool{}
+	for i := range voteTexts {
+		tw := VoteTweet(v, i, "https://tartuffe.me/")
+		assert.LessOrEqual(t, Length(tw), MaxLength, tw)
+		assert.True(t, strings.HasSuffix(tw, "\nhttps://tartuffe.me/election/presidentielle-2027"), tw)
+		assert.NotContains(t, tw, "%")
+		assert.NotContains(t, tw, "bulletins", "below the event's minimum the count is not told")
+		seen[tw] = true
+	}
+	assert.Len(t, seen, len(voteTexts))
+	assert.Equal(t, VoteTweet(v, 0, "https://tartuffe.me"), VoteTweet(v, len(voteTexts), "https://tartuffe.me"), "the texts come in turn")
+	assert.Contains(t, VoteTweet(v, 0, "https://tartuffe.me"), "jusqu'à 3 candidats")
+	v.Counted = 412
+	for i := range voteTexts {
+		tw := VoteTweet(v, i, "https://tartuffe.me")
+		assert.LessOrEqual(t, Length(tw), MaxLength, tw)
+	}
+	assert.Contains(t, VoteTweet(v, 1, "https://tartuffe.me"), "Déjà 412 bulletins.")
+}
