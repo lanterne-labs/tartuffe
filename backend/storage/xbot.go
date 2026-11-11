@@ -510,3 +510,41 @@ func (s *PostgresStorer) ExpireXPosts(ctx context.Context, before time.Time) ([]
 	}
 	return pgx.CollectRows(rows, scanXPost)
 }
+
+// XOAuth is the X bot's OAuth 2.0 tokens (x_oauth): the refresh token in
+// use, the access token it gave and until when, and the seed they started
+// from.
+type XOAuth struct {
+	Seed         string
+	RefreshToken string
+	AccessToken  string
+	ExpiresAt    time.Time
+}
+
+// GetXOAuth returns the stored tokens, nil when none were stored yet.
+func (s *PostgresStorer) GetXOAuth(ctx context.Context) (*XOAuth, error) {
+	var t XOAuth
+	err := s.pool.QueryRow(ctx, `SELECT seed, refresh_token, access_token, expires_at FROM x_oauth`).
+		Scan(&t.Seed, &t.RefreshToken, &t.AccessToken, &t.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("x oauth: %w", err)
+	}
+	return &t, nil
+}
+
+// SaveXOAuth stores the tokens in place of the previous ones.
+func (s *PostgresStorer) SaveXOAuth(ctx context.Context, t XOAuth) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO x_oauth (id, seed, refresh_token, access_token, expires_at, updated_at)
+		VALUES (true, $1, $2, $3, $4, now())
+		ON CONFLICT (id) DO UPDATE SET seed = EXCLUDED.seed, refresh_token = EXCLUDED.refresh_token,
+			access_token = EXCLUDED.access_token, expires_at = EXCLUDED.expires_at, updated_at = now()`,
+		t.Seed, t.RefreshToken, t.AccessToken, t.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("save x oauth: %w", err)
+	}
+	return nil
+}

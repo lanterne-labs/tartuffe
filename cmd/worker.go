@@ -166,10 +166,10 @@ func startXBot(ctx context.Context, storer *storage.PostgresStorer) error {
 	if bot.Vote == nil {
 		log.Warn().Msg("Worker: no XBOT_VOTE_POLLS: the X bot tweets nothing about the vote")
 	}
-	if p := xbot.NewXAPIPosterFromEnv(); p != nil {
+	if p := xbot.NewPosterFromEnv(storer); p != nil {
 		bot.Poster = p
 	} else {
-		log.Warn().Msg("Worker: no X keys (X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET): the X bot drafts and asks, but posts nothing")
+		log.Warn().Msg("Worker: no X keys (X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET, or X_CLIENT_ID, X_CLIENT_SECRET, X_REFRESH_TOKEN): the X bot drafts and asks, but posts nothing")
 	}
 	if err := bot.Config(); err != nil {
 		return err
