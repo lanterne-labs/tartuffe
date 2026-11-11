@@ -550,10 +550,13 @@ type ScoreExplanation struct {
 	Bundles int `json:"bundles"`
 	Pairs   int `json:"pairs"`
 	Extras  int `json:"extras"`
-	// Denominator is max(Facts, MinDenominator).
+	// Denominator is max(Facts, MinFacts); FactsWeight what the facts make
+	// of a contradiction's weight, sqrt(ReferenceFacts / Denominator)
+	// (core.HonestyFactsWeight).
 	Denominator    int     `json:"denominator"`
-	MinDenominator int     `json:"min_denominator"`
-	RatioDecay     float64 `json:"ratio_decay"`
+	MinFacts       int     `json:"min_facts"`
+	ReferenceFacts int     `json:"reference_facts"`
+	FactsWeight    float64 `json:"facts_weight"`
 	AbsoluteDecay  float64 `json:"absolute_decay"`
 	ExtraDecay     float64 `json:"extra_decay"`
 	// OwnScore is the score of the person's own facts; MembersScore the
@@ -582,8 +585,8 @@ func (s *PostgresStorer) GetScoreExplanation(ctx context.Context, personID int64
 	}
 	defer tx.Rollback(ctx)
 	e := ScoreExplanation{
-		PersonID: personID, MinDenominator: core.HonestyScoreMinDenominator,
-		RatioDecay: core.HonestyScoreRatioDecay, AbsoluteDecay: core.HonestyScoreAbsoluteDecay,
+		PersonID: personID, MinFacts: core.HonestyScoreMinFacts,
+		ReferenceFacts: core.HonestyScoreReferenceFacts, AbsoluteDecay: core.HonestyScoreAbsoluteDecay,
 		ExtraDecay: core.HonestyScoreBundleExtraDecay,
 	}
 	var entityType *string
@@ -601,7 +604,8 @@ func (s *PostgresStorer) GetScoreExplanation(ctx context.Context, personID int64
 		return nil, err
 	}
 	e.Bundles, e.Pairs, e.Extras = stats.Bundles, stats.Total, max(0, stats.Total-stats.Bundles)
-	e.Denominator = max(e.Facts, core.HonestyScoreMinDenominator)
+	e.Denominator = max(e.Facts, core.HonestyScoreMinFacts)
+	e.FactsWeight = core.HonestyFactsWeight(e.Facts)
 	e.OwnScore = core.ComputeHonestyScore(e.Facts, stats)
 	if e.EntityType != "" && e.EntityType != "human" {
 		if err := tx.QueryRow(ctx, `

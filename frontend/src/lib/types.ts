@@ -257,8 +257,9 @@ export interface ScoreExplanation {
 	pairs: number;
 	extras: number;
 	denominator: number;
-	min_denominator: number;
-	ratio_decay: number;
+	min_facts: number;
+	reference_facts: number;
+	facts_weight: number;
 	absolute_decay: number;
 	extra_decay: number;
 	own_score: number;

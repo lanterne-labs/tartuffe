@@ -8,9 +8,8 @@ import (
 )
 
 func TestComputeHonestyScore(t *testing.T) {
-	// Each test fully bundles: bundles == total, so the extras penalty is zero. With the
-	// smoothed formula (RD=1.5, AD=0.09, floor=75), score = exp(-1.5*ratio - 0.09*bundles)
-	// where ratio = bundles / max(facts, 75).
+	// Each test fully bundles: bundles == total, so the extras penalty is zero and
+	// score = exp(-sqrt(3000/max(facts, 500)) * 0.09 * bundles).
 	tests := []struct {
 		name        string
 		facts       int
@@ -21,17 +20,18 @@ func TestComputeHonestyScore(t *testing.T) {
 	}{
 		{"zero facts returns 1.0", 0, 0, 0, 1.0, 1.0},
 		{"zero contradictions returns 1.0", 200, 0, 0, 1.0, 1.0},
-		// 1 contradiction in a tiny fact base must stay generous (~90%).
-		{"1/2 stays near 90%", 2, 1, 1, 0.89, 0.90},
-		{"1/200 ~ 91%", 200, 1, 1, 0.90, 0.91},
-		{"5/200 ~ 61%", 200, 5, 5, 0.61, 0.62},
-		{"14/200 ~ 26%", 200, 14, 14, 0.25, 0.26},
-		{"20/200 ~ 14%", 200, 20, 20, 0.14, 0.15},
-		{"50/200 ~ 0.8%", 200, 50, 50, 0.007, 0.008},
-		{"100/200 ~ 0", 200, 100, 100, 0.0, 0.001},
-		// With the smoothing floor, extreme ratios at tiny fact counts stay above zero;
-		// the absolute decay still pulls them down as bundles grow.
-		{"10/10 with smoothing ~ 33%", 10, 10, 10, 0.33, 0.34},
+		// At the reference, a contradiction has its plain weight.
+		{"1/3000 ~ 91%", 3000, 1, 1, 0.91, 0.92},
+		{"7/3000 ~ 53%", 3000, 7, 7, 0.53, 0.54},
+		// Under the floor the weight is capped: one contradiction costs 20 points.
+		{"1/2 ~ 80%", 2, 1, 1, 0.80, 0.81},
+		{"1/500 ~ 80%", 500, 1, 1, 0.80, 0.81},
+		// The same 15 contradictions weigh less and less as the facts grow, and never nothing.
+		{"15/300 ~ 4%", 300, 15, 15, 0.03, 0.04},
+		{"15/1000 ~ 10%", 1000, 15, 15, 0.09, 0.10},
+		{"15/3000 ~ 26%", 3000, 15, 15, 0.25, 0.26},
+		{"15/12000 ~ 51%", 12000, 15, 15, 0.50, 0.51},
+		{"60/12000 ~ 7%", 12000, 60, 60, 0.06, 0.07},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,32 +42,36 @@ func TestComputeHonestyScore(t *testing.T) {
 	}
 }
 
-// TestComputeHonestyScore_LowFactSmoothing asserts that one contradiction against
-// a tiny fact base does not collapse the score: with the smoothing floor of 75,
-// 1 contradiction out of 2 facts should yield ~90%, and the score should decay
-// exponentially from there as bundles grow.
-func TestComputeHonestyScore_LowFactSmoothing(t *testing.T) {
-	score := ComputeHonestyScore(2, ContradictionStats{Bundles: 1, Total: 1})
-	assert.Greater(t, score, 0.89, "1 contradiction against 2 facts must stay above 89%%")
-	assert.Less(t, score, 0.91, "1 contradiction against 2 facts should still cost ~10%%")
-
-	// Decay should be exponential in bundles when fact count is below the smoothing floor.
-	s1 := ComputeHonestyScore(2, ContradictionStats{Bundles: 1, Total: 1})
-	s2 := ComputeHonestyScore(2, ContradictionStats{Bundles: 2, Total: 2})
-	s5 := ComputeHonestyScore(2, ContradictionStats{Bundles: 5, Total: 5})
-	assert.Greater(t, s1, s2, "more bundles must reduce score")
-	assert.Greater(t, s2, s5, "more bundles must reduce score")
-	// More facts at the same bundle count must improve the score once we're past the floor.
-	scoreLowFacts := ComputeHonestyScore(75, ContradictionStats{Bundles: 1, Total: 1})
-	scoreHighFacts := ComputeHonestyScore(500, ContradictionStats{Bundles: 1, Total: 1})
-	assert.Greater(t, scoreHighFacts, scoreLowFacts, "more facts with same contradiction count should improve score")
+// TestComputeHonestyScore_BetweenCountAndRate asserts the middle the weight holds between
+// the count of the contradictions and their rate.
+func TestComputeHonestyScore_BetweenCountAndRate(t *testing.T) {
+	score := func(facts, bundles int) float64 {
+		return ComputeHonestyScore(facts, ContradictionStats{Bundles: bundles, Total: bundles})
+	}
+	// The count matters: at any fact count, more contradictions lower the score.
+	for _, facts := range []int{2, 500, 3000, 20000} {
+		assert.Greater(t, score(facts, 1), score(facts, 2), "%d facts", facts)
+		assert.Greater(t, score(facts, 2), score(facts, 5), "%d facts", facts)
+	}
+	// The facts matter: the same contradictions among more facts cost less.
+	assert.Greater(t, score(1000, 15), score(500, 15))
+	assert.Greater(t, score(5000, 15), score(1000, 15))
+	// Not the rate alone: the same rate over more facts is more contradictions, and costs more.
+	assert.Greater(t, score(1000, 5), score(4000, 20))
+	// Under the floor the facts no longer count: a small sample tells no rate.
+	assert.Equal(t, score(2, 1), score(500, 1))
+	// 4 times the facts halve the weight.
+	assert.InDelta(t, HonestyFactsWeight(1000)/2, HonestyFactsWeight(4000), 1e-12)
+	assert.InDelta(t, 1.0, HonestyFactsWeight(HonestyScoreReferenceFacts), 1e-12)
+	// A fact that comes with its contradiction never raises the score.
+	assert.Greater(t, score(3000, 5), score(3001, 6))
 }
 
 // TestComputeHonestyScore_BundlingReducesPenalty asserts the core property of bundling:
 // for any N >= 2, replacing N independent pairs with one bundle of size N strictly raises
 // the score (i.e. the penalty j + a*ln(N) is strictly less than j*N). The condition on
-// the constants is a < j / ln 2 (the case N = 2, the tightest); with many facts the ratio
-// term no longer helps the bundle, so the constants alone must hold it.
+// the constants is a < j / ln 2 (the case N = 2, the tightest): the facts weigh on both
+// sides alike, so the constants alone must hold it.
 func TestComputeHonestyScore_BundlingReducesPenalty(t *testing.T) {
 	assert.Less(t, HonestyScoreBundleExtraDecay*math.Ln2, HonestyScoreAbsoluteDecay,
 		"a bundle of 2 pairs must cost less than 2 distinct bundles whatever the fact count")
