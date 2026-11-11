@@ -28,7 +28,7 @@
 	// it with `meta` in the data of its load, the others get the site's.
 	const defaultMeta = {
 		title: 'tartuffe.me',
-		description: 'Le labo tartuffe.me construit des outils pour des démocraties plus transparentes : le détecteur de contradictions des responsables politiques, et des expériences de vote en ligne privé.'
+		description: 'tartuffe.me, un projet de Lanterne Labs, laboratoire indépendant d’outils pour une démocratie plus transparente : le détecteur de contradictions des responsables politiques, et des expériences de vote en ligne privé.'
 	};
 	let meta = $derived({ ...defaultMeta, ...(($page.data as { meta?: { title?: string; description?: string; image?: string } })?.meta ?? {}) });
 

@@ -58,8 +58,8 @@
 			metaDesc:
 				'Comment tartuffe.me collecte les votes et déclarations des responsables politiques, détecte leurs contradictions et calcule son Tartuffe-Score. Méthode, limites et neutralité.',
 			kicker: 'À propos',
-			labLine: 'Tartuffe est le premier produit du labo tartuffe.me, un laboratoire d’outils pour une démocratie plus transparente.',
-			labLink: 'Le labo',
+			labLine: 'Tartuffe est le premier produit de Lanterne Labs, un laboratoire indépendant qui conçoit et finance des outils pour une démocratie plus transparente.',
+			labLink: 'Lanterne Labs',
 			title: 'Cohérent ou tartuffe ?',
 			lead: 'Ce qu’ils disent, ce qu’ils votent, ce que la justice a tranché : quand ça ne colle pas, nous le montrons, sources à l’appui. Nous ne jugeons pas qui a raison.',
 			heroPills: ['Tout est sourcé', 'Les mêmes règles pour tous', 'Vous pouvez nous corriger'],
@@ -134,15 +134,15 @@
 				['Indépendant', 'Un projet collaboratif, porté par sa communauté.']
 			],
 
-			pollLink: 'Le labo mène aussi, à part, une expérience de vote secret en ligne : la présidentielle 2027'
+			pollLink: 'Lanterne Labs mène aussi, à part, une expérience de vote secret en ligne : la présidentielle 2027'
 		},
 		en: {
 			metaTitle: 'About — tartuffe.me',
 			metaDesc:
 				'How tartuffe.me collects the votes and statements of politicians, detects their contradictions and computes its Tartuffe-Score. Method, limits and neutrality.',
 			kicker: 'About',
-			labLine: 'Tartuffe is the first product of the tartuffe.me lab, an R&D lab for more transparent democracies.',
-			labLink: 'The lab',
+			labLine: 'Tartuffe is the first product of Lanterne Labs, an independent lab that builds and funds tools for more transparent democracies.',
+			labLink: 'Lanterne Labs',
 			title: 'Coherent or tartuffe?',
 			lead: 'What they say, how they vote, what the courts ruled: when it does not add up, we show it, with the sources. We don’t say who is right.',
 			heroPills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
@@ -217,7 +217,7 @@
 				['Independent', 'A collaborative project, driven by its community.']
 			],
 
-			pollLink: 'The lab also runs, apart, an experiment in private online voting: the 2027 presidential election'
+			pollLink: 'Lanterne Labs also runs, apart, an experiment in private online voting: the 2027 presidential election'
 		}
 	};
 
