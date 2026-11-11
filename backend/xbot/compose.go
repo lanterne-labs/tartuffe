@@ -37,7 +37,7 @@ type Style struct {
 // Styles are the versions of a draft, in the order of the buttons.
 var Styles = []Style{
 	{"standard", "Sobre", "plain and factual: what they said, then what they said or did, side by side, with a dry last word at most. Clear to someone who never heard of it."},
-	{"satirical", "Satirique", "in the spirit of a French satirical weekly: a pun or a play on their own words, a mock-serious headline, biting irony, a bit provocative. Funny, never insulting or contemptuous."},
+	{"satirical", "Satirique", "in the spirit of a French satirical weekly: a pun or a play on their own words, a mock-serious headline, biting irony, a bit provocative. Funny, never insulting or contemptuous. The joke must land at the first read, for someone scrolling fast who never heard of the subject: say plainly what they said and what they did, then one punchline. No allusion that needs a second read to be understood."},
 }
 
 // Draft is a tweet on a contradiction: the versions to choose from (tags and

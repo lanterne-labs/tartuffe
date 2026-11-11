@@ -34,9 +34,9 @@ type VoteState struct {
 // candidates a ballot ranks.
 var voteTexts = []string{
 	"Présidentielle 2027 : et si vous votiez dès maintenant ? Classez jusqu'à %d candidats, ou votez blanc. Votre passeport prouve que vous êtes électeur, sans dire qui vous êtes.",
-	"Un vote où personne, ni nous ni l'État, ne peut savoir qui a voté quoi. Et où chacun peut recompter. Il est ouvert, pour 2027.",
+	"Un vote où personne, ni nous ni l'État, ne peut savoir qui a voté quoi. Où chacun peut recompter. Et où vous pouvez changer d'avis jusqu'à la clôture. Il est ouvert, pour 2027.",
 	"Avant de choisir votre candidat pour 2027, regardez son Tartuffe-Score : il s'affiche à côté de chaque nom au moment de voter.",
-	"La puce de votre passeport peut prouver « majeur, français » sans rien révéler d'autre. C'est tout ce qu'il faut pour voter ici, en secret.",
+	"Pour voter ici, il suffit de votre passeport et de votre téléphone. Aucun compte, aucun e-mail, et votre vote reste secret.",
 	"Ni scrutin officiel ni sondage : un vote d'opinion, ouvert à tout électeur français muni d'un passeport, anonyme, vérifiable par tous. Qui choisiriez-vous pour 2027 ?",
 	"Aucun candidat ne vous convient pour 2027 ? Dites-le : le vote blanc est compté à part. Sinon, classez-en jusqu'à %d.",
 }
