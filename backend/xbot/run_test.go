@@ -102,8 +102,10 @@ func testBot(t *testing.T) (*Bot, *fakeTelegram, *fakePoster, *pgxpool.Pool) {
 	poster := &fakePoster{}
 	zone, _ := time.LoadLocation("Europe/Paris")
 	now := time.Date(2026, 11, 10, 11, 30, 0, 0, zone)
+	// The sober version quotes the fact both contradictions share: the draft
+	// has its two versions whichever contradiction is picked.
 	b := &Bot{Store: store, Telegram: NewTelegram("tok", 42, srv.URL), Poster: poster,
-		Writer: &fakeWriter{reply: Reply{Standard: "Jean Dupont : « la retraite à 60 ans ». Puis 64. Logique.", Satirical: "Jean Dupont, toujours constant."}},
+		Writer: &fakeWriter{reply: Reply{Standard: "Jean Dupont : « Je voterai le report à 64 ans ». Logique.", Satirical: "Jean Dupont, toujours constant."}},
 		Slots:  []Clock{{12, 0}, {19, 0}}, Zone: zone, Lead: time.Hour, Grace: time.Hour, Site: "https://tartuffe.me",
 		Now: func() time.Time { return now }}
 	return b, tg, poster, pool
