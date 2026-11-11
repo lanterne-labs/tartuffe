@@ -20,4 +20,8 @@
 	@media (max-width: 860px) {
 		.nav { width: 30px; height: 19px; }
 	}
+	/* A phone on its side: the title must be on the first screen. */
+	@media (max-height: 520px) {
+		.hero { width: 96px; height: 60px; margin: 0 auto 0.25rem; }
+	}
 </style>

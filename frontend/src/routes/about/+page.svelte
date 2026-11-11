@@ -667,6 +667,7 @@
 	.neutral-item h3 {
 		font-size: 1.15rem;
 		margin-bottom: 0.3rem;
+		text-align: left;
 	}
 	.neutral-item p {
 		margin: 0;

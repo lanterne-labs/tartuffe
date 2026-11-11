@@ -382,6 +382,7 @@
 		border: 1px dashed var(--event);
 		border-radius: var(--radius-lg);
 		background: color-mix(in oklch, var(--event) 7%, var(--bg-card));
+		text-align: left;
 	}
 	.ev-head {
 		display: flex;
@@ -772,6 +773,7 @@
 		font-size: 1.35rem;
 		font-weight: 600;
 		margin: 0.9rem 0 0.4rem;
+		text-align: left;
 	}
 	.svc p {
 		flex: 1;

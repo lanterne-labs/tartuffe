@@ -1721,7 +1721,8 @@
 	}
 	.vote-row {
 		display: grid;
-		grid-template-columns: 1.1rem auto minmax(0, 1fr);
+		/* The rank has two digits from the tenth line on. */
+		grid-template-columns: 1.5rem auto minmax(0, 1fr);
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.55rem 0.6rem;
@@ -1741,6 +1742,7 @@
 		font-weight: 700;
 		color: var(--text-muted);
 		text-align: center;
+		white-space: nowrap;
 		font-variant-numeric: tabular-nums;
 	}
 	.who-text {

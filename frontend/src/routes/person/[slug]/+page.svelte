@@ -951,6 +951,7 @@
 		font-weight: 600;
 		line-height: 1.2;
 		margin: 0 0 0.25rem;
+		text-align: left;
 	}
 	.vote-call p {
 		margin: 0;
@@ -990,6 +991,19 @@
 		padding: 0.55rem 1.1rem;
 		font-size: 0.9rem;
 	}
+	/* Under the hero on a phone: one line, the question and its button. */
+	@media (max-width: 899px) {
+		.vote-call--corner {
+			flex-wrap: nowrap;
+			max-width: 26rem;
+		}
+		.vote-call--corner h2 {
+			font-size: 1rem;
+		}
+		.vote-call--corner > div {
+			min-width: 0;
+		}
+	}
 	@media (min-width: 900px) {
 		.vote-call--corner {
 			position: absolute;
@@ -1000,6 +1014,9 @@
 			align-items: stretch;
 			text-align: center;
 			background: radial-gradient(ellipse 100% 60% at 50% 0%, var(--event-glow), transparent 70%), var(--bg-card);
+		}
+		.vote-call--corner h2 {
+			text-align: center;
 		}
 		.vote-call--corner a {
 			justify-content: center;
@@ -1602,6 +1619,18 @@
 		.stance-meta {
 			grid-column: 1 / -1;
 			margin-top: 0;
+		}
+		/* The share button keeps the corner of the meta: on a row of its own
+		   it would leave a blank line under every card. */
+		.stance-meta {
+			position: relative;
+			min-height: 2.5rem;
+			padding-right: 2.75rem;
+		}
+		.stance-meta > :global(.share) {
+			position: absolute;
+			right: 0;
+			bottom: 0;
 		}
 		.stance-clickable {
 			padding: 0.9rem 1rem;

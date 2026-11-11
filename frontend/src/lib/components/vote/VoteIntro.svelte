@@ -977,7 +977,9 @@
 
 	/* A phone: the slides fill the screen, the buttons sit above the home
 	   bar, a slide taller than the screen scrolls between the two. */
-	@media (max-width: 560px) {
+	/* A phone, upright or on its side (wide but short): the whole screen, the
+	   slide scrolls between the count and the buttons, which stay in view. */
+	@media (max-width: 560px), (max-height: 640px) {
 		.intro {
 			width: 100vw;
 			max-width: none;

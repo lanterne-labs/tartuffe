@@ -347,7 +347,7 @@
 			<a class="btn-alt" href={paths.how}>{c.how}</a>
 		</div>
 		<p class="disclaimer">{c.disclaimer}</p>
-		<p class="lab-line">{tr('event.who', currentLang)} <a href="/lab">{c.labLink} →</a></p>
+		<p class="lab-line">{tr('event.who', currentLang)} <a href="/lab" style="white-space: nowrap">{c.labLink} →</a></p>
 	</section>
 </article>
 
@@ -737,6 +737,16 @@
 		.mask {
 			right: -0.4rem;
 			width: 4.2rem;
+		}
+	}
+	/* A phone on its side: the title and what follows it on the first screen. */
+	@media (max-height: 520px) {
+		.hero {
+			margin-top: 1rem;
+		}
+		h1 {
+			font-size: clamp(2rem, 4.6vw, 2.8rem);
+			margin-bottom: 0.7rem;
 		}
 	}
 	/* Why vote here: one column of rows, the icon beside the text, with the

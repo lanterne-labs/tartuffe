@@ -330,6 +330,9 @@
 		font-size: 0.8125rem;
 		color: var(--text-secondary);
 		max-width: 60ch;
+		margin-left: auto;
+		margin-right: auto;
+		text-align: center;
 	}
 	.others {
 		margin-top: 3rem;

@@ -278,8 +278,14 @@
 	.readout {
 		display: flex;
 		align-items: baseline;
+		justify-content: center;
 		gap: 0.2rem;
 		margin-top: 0.25rem;
+	}
+	/* The dial's label is wider than the dial and centred on it: at the left
+	   edge of the column it would stick out of the card. */
+	.controls :global(.ts) {
+		align-self: center;
 	}
 	.big {
 		font-family: var(--font-serif);
