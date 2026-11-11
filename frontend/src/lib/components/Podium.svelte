@@ -65,7 +65,7 @@
 			{#each worst as person, i (person.id)}
 				<li class="step step--{i + 1}">
 					<a href={personPath(person.slug)} class="laureate">
-						<TartuffeScore honesty={person.honesty_score} {lang} size={i === 0 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
+						<TartuffeScore honesty={person.honesty_score} {lang} size={i === 0 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} />
 						<span class="name">{person.name}</span>
 						<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', lang)}</span>
 					</a>

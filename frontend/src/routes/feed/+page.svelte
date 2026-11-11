@@ -332,7 +332,7 @@
 					{tr(`feed.kind.${it.kind}`, currentLang)}
 				</span>
 				<a href={personPath(it.person.slug)} class="avatar-link" aria-label={it.person.name}>
-					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} facts={it.person.fact_count} reliable={it.person.score_reliable} covered={it.person.covered_facts} />
+					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} facts={it.person.fact_count} reliable={it.person.score_reliable} />
 				</a>
 				<div class="main">
 					<div class="head">

@@ -537,7 +537,7 @@
 	{:else if person}
 		<div class="person-hero">
 			<div class="hero-left">
-				<TartuffeScore honesty={scored ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
+				<TartuffeScore honesty={scored ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} />
 				<div class="hero-info">
 					<h1>
 						{person.name}

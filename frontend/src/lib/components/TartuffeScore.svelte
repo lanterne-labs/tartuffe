@@ -46,10 +46,8 @@
 		animate?: boolean;
 		/** False while the score is not reliable (the API's score_reliable). */
 		reliable?: boolean;
-		/** The facts from which a person is covered (the API's covered_facts). */
-		covered?: number;
 	}
-	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, compact = false, help: withHelp = true, facts, caption = '', animate = false, reliable, covered }: Props = $props();
+	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, compact = false, help: withHelp = true, facts, caption = '', animate = false, reliable }: Props = $props();
 
 	const uid = $props.id();
 	// Below this many facts the score says too little to be shown.
@@ -60,12 +58,7 @@
 	let colour = $derived(unrated ? 'var(--text-muted)' : tartuffeColor(at));
 	let unsure = $derived(!unrated && reliable === false);
 	let unsureOpen = $state(false);
-	let unsureText = $derived(
-		tr('score.consolidating', lang, {
-			f: (facts ?? 0).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR'),
-			s: coveredText(covered, lang)
-		})
-	);
+	let unsureText = $derived(tr('score.consolidating', lang));
 	// The graduations: one every 5 points, every 10 on a small dial.
 	let marks = $derived(MARKS.filter((_, i) => size === 'lg' || size === 'md' || i % 2 === 0));
 	let centreNumber = $derived(!image && !initial);
@@ -104,11 +97,6 @@
 </script>
 
 <script lang="ts" module>
-	/** The facts from which a person is covered, as shown: rounded to 50. */
-	export function coveredText(covered: number | undefined, lang: Lang): string {
-		return (Math.round((covered ?? 0) / 50) * 50).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR');
-	}
-
 	/** The Tartuffe value, 0 (coherent) to 100 (tartuffe), of an honesty score 0 to 1. */
 	export function tartuffeOf(honesty: number | null | undefined): number | null {
 		return typeof honesty === 'number' && Number.isFinite(honesty) ? Math.round((1 - honesty) * 100) : null;
