@@ -6,13 +6,13 @@
 	// (backend/core/honesty.go): Tartuffe-Score = 100 · (1 − honesty).
 	import type { Lang } from '$lib/i18n';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
-	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_DENOMINATOR, RATIO_DECAY, formatConstant, scoreTerms } from '$lib/score';
+	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_FACTS, REFERENCE_FACTS, formatConstant, scoreTerms } from '$lib/score';
 
 	let { lang }: { lang: Lang } = $props();
 
-	const FLOOR = MIN_DENOMINATOR;
+	const FLOOR = MIN_FACTS;
 	const B_MAX = 40;
-	const factOptions = [FLOOR, 300, 1000];
+	const factOptions = [FLOOR, REFERENCE_FACTS, 10000];
 
 	function score(b: number, f: number, e: number): number {
 		if (f <= 0) return 0;
@@ -20,7 +20,7 @@
 	}
 
 	let b = $state(1);
-	let f = $state(300);
+	let f = $state(REFERENCE_FACTS);
 	let e = $state(0);
 
 	let value = $derived(score(b, f, e));
@@ -55,27 +55,27 @@
 			contradictions: 'Contradictions distinctes (B)',
 			facts: 'Faits connus (F)',
 			extra: 'Paires en plus dans les mêmes lots (E)',
-			floor: '≤ 75',
+			floor: `≤ ${FLOOR}`,
 			score: 'Tartuffe-Score',
 			axisX: 'contradictions distinctes',
-			few: 'Avec si peu de faits, un score bas veut surtout dire que l’on sait encore peu de choses sur cette personne.',
-			many: 'Avec beaucoup de faits, chaque contradiction pèse moins : elle est rapportée à tout ce que l’on sait.',
+			few: 'Avec peu de faits, chaque contradiction pèse plus lourd, et un score bas veut surtout dire que l’on sait encore peu de choses sur cette personne.',
+			many: 'Plus on connaît de faits, moins chaque contradiction pèse : qui parle beaucoup finit par se contredire un peu. Quatre fois plus de faits, et elle pèse moitié moins.',
 			alt: 'Courbe du Tartuffe-Score en fonction du nombre de contradictions'
 		},
 		en: {
 			contradictions: 'Distinct contradictions (B)',
 			facts: 'Known facts (F)',
 			extra: 'Extra pairs inside the same bundles (E)',
-			floor: '≤ 75',
+			floor: `≤ ${FLOOR}`,
 			score: 'Tartuffe-Score',
 			axisX: 'distinct contradictions',
-			few: 'With so few facts, a low score mostly means we still know little about this person.',
-			many: 'With many facts, each contradiction weighs less: it is measured against everything we know.',
+			few: 'With few facts, each contradiction weighs more, and a low score mostly means we still know little about this person.',
+			many: 'The more facts we know, the less each contradiction weighs: whoever speaks a lot ends up contradicting themselves a little. Four times the facts, and it weighs half as much.',
 			alt: 'Curve of the Tartuffe-Score as a function of the number of contradictions'
 		}
 	};
 	let c = $derived(text[lang]);
-	let k = $derived([RATIO_DECAY, ABSOLUTE_DECAY, EXTRA_DECAY].map((n) => formatConstant(n, lang)));
+	let k = $derived([ABSOLUTE_DECAY, EXTRA_DECAY].map((n) => formatConstant(n, lang)));
 </script>
 
 <div class="explorer">
@@ -119,7 +119,7 @@
 		</div>
 		<TartuffeScore honesty={1 - value / 100} {lang} size="md" />
 		<p class="formula" aria-hidden="true">
-			100 × (1 − exp(−{k[0]}×{b}/{Math.max(f, FLOOR)} − {k[1]}×{b} − {k[2]}×ln(1+{e})))
+			100 × (1 − exp(−√({REFERENCE_FACTS}/{Math.max(f, FLOOR)}) × ({k[0]}×{b} + {k[1]}×ln(1+{e}))))
 		</p>
 		<p class="hint">{f <= FLOOR ? c.few : c.many}</p>
 	</div>
@@ -147,7 +147,7 @@
 				{@const gb = B_MAX - 10 * i}
 				<path class="ghost" d={g.d} />
 				<text class="ghost-label" x={x(gb) - 2} y={y(score(gb, g.f, e)) - 4} text-anchor="end"
-					>{g.f === FLOOR ? `F ≤ ${FLOOR}` : `F = ${g.f}`}</text
+					>{g.f === FLOOR ? `F ≤ ${FLOOR}` : `F = ${g.f.toLocaleString(lang)}`}</text
 				>
 			{/each}
 			<path class="area" d={areaPath} fill="url(#score-area)" />

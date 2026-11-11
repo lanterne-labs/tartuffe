@@ -2,9 +2,19 @@
 	// The pipeline of the site, from the sources to the score: a horizontal
 	// strip on wide screens (an overview with a flow of data along it), then
 	// a timeline with one step per stage, which is all a phone shows.
+	// With `steps` (the home page) it is the short version: the same strip,
+	// and under it three steps in place of the timeline, each under the
+	// stages it covers (sources and facts, stances and contradictions, score).
 	import type { Lang } from '$lib/i18n';
 
-	let { lang }: { lang: Lang } = $props();
+	let { lang, steps }: { lang: Lang; steps?: [string, string][] } = $props();
+
+	// The stages each of the three steps covers.
+	const GROUPS = [
+		[0, 1],
+		[2, 3],
+		[4]
+	];
 
 	type Stage = { key: string; title: string; body: string[] };
 
@@ -128,7 +138,7 @@
 	{/if}
 {/snippet}
 
-<figure class="strip" aria-hidden="true">
+<figure class="strip" class:compact={!!steps} aria-hidden="true">
 	<svg viewBox="0 0 {SW} 120">
 		<line class="rail" x1={cx(0)} x2={cx(4)} y1="44" y2="44" />
 		{#each [0, 1, 2, 3, 4, 5] as p}
@@ -144,22 +154,45 @@
 	</svg>
 </figure>
 
-<ol class="timeline" aria-label={c.alt}>
-	{#each c.stages as s, i}
-		<li class="step" style:--i={i}>
-			<div class="rail-col" aria-hidden="true">
-				<span class="node" class:last={i === 4}>
-					<svg viewBox="0 0 24 24">{@render icon(s.key)}</svg>
-				</span>
-				{#if i < c.stages.length - 1}<span class="link"><span class="spark"></span></span>{/if}
-			</div>
-			<div class="card">
-				<h3><span class="num">{i + 1}</span>{s.title}</h3>
-				{#each s.body as p}<p>{p}</p>{/each}
-			</div>
-		</li>
-	{/each}
-</ol>
+{#if steps}
+	<ol class="groups" aria-label={c.alt}>
+		{#each steps as [head, body], g}
+			<li style:--span={GROUPS[g].length} style:--i={g}>
+				<div class="g-rail" aria-hidden="true">
+					{#each GROUPS[g] as i}
+						<span class="node" class:last={i === 4}>
+							<svg viewBox="0 0 24 24">{@render icon(c.stages[i].key)}</svg>
+						</span>
+						{#if i < 4}<span class="link"><span class="spark"></span></span>{/if}
+					{/each}
+				</div>
+				<div class="g-text">
+					<span class="brace" aria-hidden="true"></span>
+					<h3><span class="num">{g + 1}</span>{head}</h3>
+					<span class="g-stages">{GROUPS[g].map((i) => c.stages[i].title).join(' · ')}</span>
+					<p>{body}</p>
+				</div>
+			</li>
+		{/each}
+	</ol>
+{:else}
+	<ol class="timeline" aria-label={c.alt}>
+		{#each c.stages as s, i}
+			<li class="step" style:--i={i}>
+				<div class="rail-col" aria-hidden="true">
+					<span class="node" class:last={i === 4}>
+						<svg viewBox="0 0 24 24">{@render icon(s.key)}</svg>
+					</span>
+					{#if i < c.stages.length - 1}<span class="link"><span class="spark"></span></span>{/if}
+				</div>
+				<div class="card">
+					<h3><span class="num">{i + 1}</span>{s.title}</h3>
+					{#each s.body as p}<p>{p}</p>{/each}
+				</div>
+			</li>
+		{/each}
+	</ol>
+{/if}
 
 <style>
 	.strip {
@@ -306,9 +339,83 @@
 		margin: 0 0 0.45rem;
 	}
 
+	/* The short version: three steps under the strip, each as wide as the
+	   stages it covers (a stage is a fifth of the strip). */
+	.strip.compact {
+		margin: 0 0 0.4rem;
+	}
+	.groups {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+	}
+	.groups li {
+		grid-column: span var(--span);
+		padding: 0 0.6rem;
+		text-align: center;
+	}
+	.g-rail,
+	.g-stages {
+		display: none;
+	}
+	.brace {
+		display: block;
+		height: 0.55rem;
+		margin: 0 calc(50% / var(--span) - 1.6rem) 0.7rem;
+		border: 1px solid var(--border-card-hover);
+		border-top: none;
+		border-radius: 0 0 0.5rem 0.5rem;
+	}
+	.groups h3 {
+		justify-content: center;
+		margin-top: 0;
+	}
+	.groups p {
+		font-size: 0.92rem;
+		line-height: 1.5;
+		margin: 0;
+	}
+
 	@media (max-width: 600px) {
 		.strip {
 			display: none;
+		}
+		.groups {
+			display: block;
+		}
+		.groups li {
+			display: grid;
+			grid-template-columns: 2.75rem minmax(0, 1fr);
+			gap: 1rem;
+			padding: 0;
+			text-align: left;
+		}
+		.g-rail {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+		}
+		.g-rail .link {
+			min-height: 1rem;
+		}
+		.g-text {
+			padding: 0.15rem 0 1.5rem;
+		}
+		.brace {
+			display: none;
+		}
+		.groups h3 {
+			justify-content: flex-start;
+			margin: 0.45rem 0 0.1rem;
+		}
+		.g-stages {
+			display: block;
+			margin-bottom: 0.35rem;
+			font-size: 0.75rem;
+			letter-spacing: 0.04em;
+			color: var(--text-muted);
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {

@@ -3,10 +3,12 @@
 // stance's from its card (its facts, and its contradiction pairs counted as
 // one bundle).
 
-export const RATIO_DECAY = 1.5;
 export const ABSOLUTE_DECAY = 0.09;
 export const EXTRA_DECAY = 0.125;
-export const MIN_DENOMINATOR = 75;
+/** The facts at which a contradiction has its plain weight. */
+export const REFERENCE_FACTS = 3000;
+/** The floor of the facts in the weight: under it a sample tells no rate. */
+export const MIN_FACTS = 500;
 
 /** A constant of the formula as shown: French writes the decimal with a comma. */
 export function formatConstant(n: number, lang: string): string {
@@ -22,20 +24,21 @@ export interface ScoreInputs {
 export interface ScoreTerms {
 	denominator: number;
 	extras: number;
-	ratioTerm: number;
+	/** What the facts make of a contradiction's weight: √(REFERENCE_FACTS / denominator). */
+	factsWeight: number;
 	absoluteTerm: number;
 	extraTerm: number;
 	score: number;
 }
 
 export function scoreTerms({ facts, bundles, pairs }: ScoreInputs): ScoreTerms {
-	const denominator = Math.max(facts, MIN_DENOMINATOR);
+	const denominator = Math.max(facts, MIN_FACTS);
 	const extras = Math.max(0, pairs - bundles);
-	const ratioTerm = (RATIO_DECAY * bundles) / denominator;
+	const factsWeight = Math.sqrt(REFERENCE_FACTS / denominator);
 	const absoluteTerm = ABSOLUTE_DECAY * bundles;
 	const extraTerm = EXTRA_DECAY * Math.log1p(extras);
-	const score = facts === 0 ? 1 : Math.exp(-ratioTerm - absoluteTerm - extraTerm);
-	return { denominator, extras, ratioTerm, absoluteTerm, extraTerm, score };
+	const score = facts === 0 ? 1 : Math.exp(-factsWeight * (absoluteTerm + extraTerm));
+	return { denominator, extras, factsWeight, absoluteTerm, extraTerm, score };
 }
 
 export function stanceInputs(factCount: number, pairs: number): ScoreInputs {

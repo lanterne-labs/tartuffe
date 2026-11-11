@@ -15,6 +15,7 @@
 	import { factYear } from '$lib/dates';
 	import { displayName, sharePath } from '$lib/share';
 	import BrandMark from '$lib/components/BrandMark.svelte';
+	import Pipeline from '$lib/components/about/Pipeline.svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -120,6 +121,7 @@
 				['On confronte', 'Quand ils se contredisent, on le note.'],
 				['On publie', 'Son Tartuffe-Score monte, preuves à l’appui.']
 			],
+			howMore: 'La méthode en détail',
 			exNote: 'On mesure la cohérence, pas la vérité.',
 
 			svcKicker: 'Suivre et vérifier',
@@ -174,6 +176,7 @@
 				['We compare', 'The two clash? It’s on record.'],
 				['We show', 'The Tartuffe-Score rises. With the sources.']
 			],
+			howMore: 'The method in detail',
 			exNote: 'Consistency, not truth.',
 
 			svcKicker: 'Follow and verify',
@@ -325,11 +328,10 @@
 			{/if}
 		</div>
 
-		<ol class="steps">
-			{#each c.steps as [head, body], i}
-				<li><span class="step-n">{i + 1}</span><strong>{head}</strong><span>{body}</span></li>
-			{/each}
-		</ol>
+		<div class="how">
+			<Pipeline lang={currentLang} steps={c.steps as [string, string][]} />
+			<a class="how-more" href="/about#how">{c.howMore} →</a>
+		</div>
 	</section>
 
 	<section class="event" use:reveal>
@@ -708,42 +710,16 @@
 		width: min(20rem, 100%);
 		margin: 0 auto;
 	}
-	.steps {
-		list-style: none;
-		padding: 0;
+	.how {
+		max-width: 46rem;
 		margin: 2.5rem auto 0;
-		max-width: 44rem;
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 1rem;
+		text-align: center;
 	}
-	.steps li {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.3rem;
-	}
-	.step-n {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 2rem;
-		height: 2rem;
-		margin-bottom: 0.3rem;
-		border-radius: 50%;
-		border: 1px solid var(--accent);
-		color: var(--accent-hover);
-		font-weight: 600;
+	.how-more {
+		display: inline-block;
+		margin-top: 1.4rem;
 		font-size: 0.9rem;
-	}
-	.steps strong {
-		font-family: var(--font-serif);
-		font-size: 1.25rem;
-		font-weight: 600;
-	}
-	.steps span:last-child {
-		color: var(--text-secondary);
-		font-size: 0.92rem;
+		color: var(--accent-hover);
 	}
 
 	/* The podium of the day, as on the dashboard */
@@ -879,10 +855,6 @@
 		.ex-body,
 		.svc-grid {
 			grid-template-columns: minmax(0, 1fr);
-		}
-		.steps {
-			grid-template-columns: minmax(0, 1fr);
-			gap: 1.5rem;
 		}
 	}
 </style>

@@ -2,6 +2,20 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-11: The score weighs a contradiction by the square root of the facts
+
+The formula `exp(-1.5·B/max(F,75) - 0.09·B - 0.125·ln(1+E))` counted the contradictions and nothing else once a person had a few hundred facts: 15 contradictions read 76 among 300 facts, 75 among 1 000 and 74 among 5 000. But whoever speaks a lot ends up contradicting themselves a little, and the candidates go from 1 000 to 4 600 facts. The rate alone (B/F) would err the other way: it forgives anything to who speaks enough, and two contradictions among 40 facts would read as fifty among 1 000.
+
+Now `exp(-√(3000/max(F,500)) · (0.09·B + 0.125·ln(1+E)))` (`core.HonestyFactsWeight`, `frontend/src/lib/score.ts`): the penalty is the geometric mean of the two readings, `B/√F`. A contradiction keeps its 9 points at 3 000 facts (about the candidates' median), costs 7 at 5 000, 14 at 1 000 and at most 20 (500 facts and under: a small sample tells no rate); 4 times the facts halve it. 15 contradictions read 96 among 300 facts, 90 among 1 000, 74 among 3 000, 52 among 10 000. The old ratio term and its floor of 75 are gone (the weight holds what they did). The weight applies to the repeats too, so the bundling inequality (`a < j / ln 2`) is unchanged.
+
+On the candidates (2026-11-11, before → after): Bardella 55 → 48, Retailleau 51 → 45, Le Pen 48 → 41, Zemmour 36 → 39, Glucksmann 30 → 33, Attal 30 → 27, Ruffin 16 → 18, Mélenchon 17 → 14, Bertrand 9 → 14. Zemmour (4 contradictions among 2 524 facts) now reads above Attal (4 among 3 910).
+
+What follows from it:
+- A stance's score uses the same function with the stance's facts, always under the floor: a contradicted stance reads 20 instead of 10, with three pairs 43 instead of 22.
+- "A score can only be too low" was exact when only contradictions moved a score; a fact without one now lowers the Tartuffe-Score a little. The reliability rule is kept (more facts bring contradictions faster than the root lightens them, so a thin score above a covered one still goes up on average); the about page says "far more often too low than too high".
+- `GET /api/person/{id}/score` gives `min_facts`, `reference_facts` and `facts_weight` in place of `min_denominator` and `ratio_decay`.
+- After the deploy, `dm scores recompute` on production rewrites the stored `persons.honesty_score`.
+
 ## 2026-11-11: A denial made before the conviction is not a contradiction
 
 Marine Le Pen had 12 contradictions on the assistants affair. Three paired the first conviction (31 March 2025) with what she said before it: "totalement innocente" in January 2025, two denials at her trial in November 2024. A defendant who pleads not guilty and is then convicted has not contradicted herself; the contradiction is the denial she keeps or makes once a court has found her guilty (the owner's rule, 2026-11-11). The same shape existed twice elsewhere: Zemmour's answer to the investigators against his later conviction, the party's denial of 2023 against the appeal ruling of 2026. Among the 66 live contradictions, 14 paired a denial with a court finding and these 5 were pleas; they are dismissed and reviewed false.
