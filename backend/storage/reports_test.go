@@ -310,6 +310,20 @@ func TestScoreBaseline(t *testing.T) {
 		assert.InDelta(t, 0.97, *base.FloorHonesty, 1e-9)
 	}
 
+	// The score compares a person's contradictions with those expected at
+	// this rate: the rate of the score is the baseline's, and a recompute
+	// writes every stored score at it (the 0.97 set by hand above goes).
+	rate, err := storer.ScoreRate(ctx)
+	require.NoError(t, err)
+	assert.InDelta(t, base.Rate, rate, 1e-12)
+	_, err = storer.RecomputeAllHonestyScores(ctx, false)
+	require.NoError(t, err)
+	var stored float64
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT honesty_score FROM persons WHERE id = $1`, f.person).Scan(&stored))
+	assert.InDelta(t, core.ComputeHonestyScore(3, core.ContradictionStats{Bundles: 3, Total: 3}, rate), stored, 1e-9)
+	assert.Less(t, stored, core.ComputeHonestyScore(4000, core.ContradictionStats{Bundles: 3, Total: 3}, rate),
+		"the same contradictions among the 4000 facts the rate expects 3 of would cost less")
+
 	// The collected period: the facts' dates, the tasks' once one ended.
 	p, err := storer.GetPersonByID(ctx, f.person)
 	require.NoError(t, err)
