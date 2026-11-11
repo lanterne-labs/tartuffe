@@ -168,7 +168,11 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'score.consolidating': { fr: 'Score en cours de consolidation : ses {f} faits relevés sont tous analysés, et un score se stabilise à partir de ~{s} faits.', en: 'Score being consolidated: all {f} facts collected are analysed, and a score settles from ~{s} facts.' },
 	'score.consolidating.short': { fr: 'Score en consolidation', en: 'Score being consolidated' },
 	'score.compare.tie': { fr: 'Au même niveau que tous les autres candidats', en: 'Level with all the other candidates' },
-	'score.compare.hint': { fr: 'Touchez un visage pour le comparer.', en: 'Tap a face to compare it.' },
+	'score.compare.hint': {
+		fr: 'Touchez un visage pour le comparer, une seconde fois pour ouvrir sa page.',
+		en: 'Tap a face to compare it, a second time to open their page.'
+	},
+	'score.compare.open': { fr: 'Ouvrir la page de {name}', en: 'Open the page of {name}' },
 	'score.lineup.who': { fr: '{name} : Tartuffe-Score {n}/100', en: '{name}: Tartuffe-Score {n}/100' },
 	'score.lineup.coherent': { fr: 'Cohérent', en: 'Coherent' },
 	'score.lineup.tartuffe': { fr: 'Tartuffe', en: 'Tartuffe' },

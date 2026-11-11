@@ -2,7 +2,9 @@
 	// One person among the others on the Tartuffe-Score: the band of the dial
 	// laid flat, filled up to the person in focus, whose portrait stands over
 	// it; every other candidate is a small face under the band, at their own
-	// place. A click on a face puts that person in focus.
+	// place. A click on a face puts that person in focus; a click on the face
+	// already in focus (the portrait, or its small face) opens their page.
+	import { goto } from '$app/navigation';
 	import { tr, type Lang } from '$lib/i18n';
 	import { displayName, personPath } from '$lib/share';
 	import { tartuffeOf, tartuffeColor, dialOf, MARKS, coveredText } from './TartuffeScore.svelte';
@@ -136,11 +138,13 @@
 			<div class="top">
 				<span class="me" style="left: {face}px">
 					{#key current.p.id}
-						{#if current.p.image_url}
-							<img src={current.p.image_url} alt={displayName(current.p.name)} />
-						{:else}
-							<span class="noimg">{current.p.name.charAt(0).toUpperCase()}</span>
-						{/if}
+						<a class="portrait" href={personPath(current.p.slug)} title={tr('score.compare.open', lang, { name: displayName(current.p.name) })}>
+							{#if current.p.image_url}
+								<img src={current.p.image_url} alt={displayName(current.p.name)} />
+							{:else}
+								<span class="noimg">{current.p.name.charAt(0).toUpperCase()}</span>
+							{/if}
+						</a>
 						{#if current.p.score_reliable === false}
 							<!-- The same mark as on the dial: a score being consolidated. -->
 							<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -183,7 +187,7 @@
 						class:other--on={r.p.id === current.p.id}
 						class:other--unsure={r.p.score_reliable === false}
 						style="left: {spots[i].x}px; top: {spots[i].row * (small + 6) + 4}px; --oc: {tartuffeColor(r.at)}"
-						onclick={() => (chosen = r.p.id)}
+						onclick={() => (r.p.id === current.p.id ? goto(personPath(r.p.slug)) : (chosen = r.p.id))}
 						aria-pressed={r.p.id === current.p.id}
 						title={r.p.score_reliable === false ? undefined : tr('score.lineup.who', lang, { name: displayName(r.p.name), n: r.t })}
 						aria-label={tr('score.lineup.who', lang, { name: displayName(r.p.name), n: r.t }) + (r.p.score_reliable === false ? ` (${tr('score.consolidating.short', lang)})` : '')}
@@ -259,6 +263,12 @@
 	.me img,
 	.me .noimg {
 		animation: pop 0.35s ease-out;
+	}
+	.portrait {
+		display: block;
+		border-radius: 50%;
+		color: inherit;
+		text-decoration: none;
 	}
 	.me img,
 	.me .noimg {
