@@ -21,6 +21,23 @@ func TestSpendSplitRounds(t *testing.T) {
 	assert.False(t, b.reached(now.Add(24*time.Hour), 0, 100), "the next day starts over")
 }
 
+func TestMaintenanceEveryFromEnv(t *testing.T) {
+	t.Setenv("MAINTENANCE_EVERY_HOURS", "")
+	v, err := maintenanceEveryFromEnv()
+	require.NoError(t, err)
+	assert.Equal(t, defaultMaintenanceEvery, v)
+	t.Setenv("MAINTENANCE_EVERY_HOURS", "24")
+	v, err = maintenanceEveryFromEnv()
+	require.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, v)
+	t.Setenv("MAINTENANCE_EVERY_HOURS", "0")
+	_, err = maintenanceEveryFromEnv()
+	assert.Error(t, err)
+	t.Setenv("MAINTENANCE_EVERY_HOURS", "a day")
+	_, err = maintenanceEveryFromEnv()
+	assert.Error(t, err)
+}
+
 func TestExtractionShareFromEnv(t *testing.T) {
 	t.Setenv("LLM_EXTRACTION_SHARE", "")
 	v, err := extractionShareFromEnv()

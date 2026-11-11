@@ -158,11 +158,16 @@ func NewHousekeeping(storer *storage.PostgresStorer, d *deps.Deps) *Housekeeping
 		log.Error().Err(err).Float64("share", defaultExtractionShare).Msg("Worker: the default extraction share is used")
 		share = defaultExtractionShare
 	}
+	every, err := maintenanceEveryFromEnv()
+	if err != nil {
+		log.Error().Err(err).Dur("every", defaultMaintenanceEvery).Msg("Worker: the default maintenance interval is used")
+		every = defaultMaintenanceEvery
+	}
 	return &Housekeeping{
 		split:            &spendSplit{share: share},
 		Storer:           storer,
 		Deps:             d,
-		MaintenanceEvery: 6 * time.Hour,
+		MaintenanceEvery: every,
 		// The AN archive is refreshed around 02:05 UTC.
 		FeedHourUTC: 3,
 		BackfillCap: time.Hour,
