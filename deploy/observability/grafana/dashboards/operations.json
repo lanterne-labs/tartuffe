@@ -320,6 +320,41 @@
           "rawSql": "SELECT day::timestamptz AS time, phase AS metric, spent_usd AS value FROM llm_api_spend_phase WHERE $__timeFilter(day::timestamptz) ORDER BY 1"
         }
       ]
+    },
+    {
+      "type": "table",
+      "title": "Documents waiting for extraction (fetched or failed, attempts left)",
+      "description": "The documents stored and not yet extracted, per source. A plugin extracts every stored document of a person at the end of any task of that person (the daily watch-list tasks drain the candidates' backlog); without_task counts the documents of persons with no pending task of that plugin: the debates (assemblee_debat) come from the daily feed, not from tasks, and wait for its 1 h/day backfill. An outage that fails the documents three times takes them out of this count: dm documents retry --match <error> gives them their attempts back.",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "id": 9,
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "WITH w AS (SELECT source_type, person_id, fetched_at FROM source_documents WHERE state IN ('fetched', 'failed') AND attempts < 3), t AS (SELECT DISTINCT person_id, plugin FROM collection_tasks WHERE status IN ('pending', 'running')) SELECT w.source_type AS source, COUNT(*) AS waiting, COUNT(DISTINCT w.person_id) AS persons, COUNT(*) FILTER (WHERE t.person_id IS NULL) AS without_task, COUNT(DISTINCT w.person_id) FILTER (WHERE t.person_id IS NULL) AS persons_without_task, MIN(w.fetched_at) AS oldest_fetch FROM w LEFT JOIN t ON t.person_id = w.person_id AND t.plugin = w.source_type GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
     }
   ]
 }
