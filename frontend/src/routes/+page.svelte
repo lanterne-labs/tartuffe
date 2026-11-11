@@ -2,8 +2,8 @@
 	import TartuffeScore, { tartuffeOf } from '$lib/components/TartuffeScore.svelte';
 	// The landing page: the contradiction checker first (the question, the
 	// podium of the day, the contradiction of the day from the feed and its
-	// score, or a made-up example while it loads), then the lab's temporary event, the private presidential vote,
-	// in its own colour with its end date, then the lab itself. The ranking is
+	// score, or a made-up example while it loads), then the lab (Lanterne Labs), then its temporary event, the
+	// private presidential vote, in its own colour with its end date. The ranking is
 	// at /dashboard.
 	import { eventPaths } from '$lib/event';
 	import { onMount } from 'svelte';
@@ -142,7 +142,7 @@
 			evCta: 'Voter',
 			evMore: 'Comment ça marche',
 
-			labKicker: 'Le labo',
+			labKicker: 'Lanterne Labs',
 			labTitle: 'Un laboratoire au service de la démocratie',
 			labBody: 'tartuffe.me conçoit et teste des outils pour une démocratie plus transparente. Les nouvelles technologies permettent enfin à chacun de suivre ce que disent et font les élus, sources à l’appui, de façon lisible. Le détecteur de contradictions est notre premier produit, le vote secret en ligne notre première expérience.',
 			labCta: 'Découvrir le labo'
@@ -197,7 +197,7 @@
 			evCta: 'Vote',
 			evMore: 'How it works',
 
-			labKicker: 'The lab',
+			labKicker: 'Lanterne Labs',
 			labTitle: 'A lab for democracy',
 			labBody: 'tartuffe.me designs and tests tools for a more transparent democracy. New technology finally lets anyone follow what elected officials say and do, with sources, in a readable way. The contradiction checker is our first product; the private vote, our first experiment.',
 			labCta: 'Discover the lab'
@@ -334,6 +334,13 @@
 		</div>
 	</section>
 
+	<section class="lab-teaser" use:reveal>
+		<span class="kicker">{c.labKicker}</span>
+		<h2>{c.labTitle}</h2>
+		<p>{c.labBody}</p>
+		<p class="more"><a href="/lab">{c.labCta} →</a></p>
+	</section>
+
 	<section class="event" use:reveal>
 		<div class="ev-head">
 			<span class="ev-tag">{c.evTag}</span>
@@ -351,12 +358,6 @@
 		</div>
 	</section>
 
-	<section class="lab-teaser" use:reveal>
-		<span class="kicker">{c.labKicker}</span>
-		<h2>{c.labTitle}</h2>
-		<p>{c.labBody}</p>
-		<p class="more"><a href="/lab">{c.labCta} →</a></p>
-	</section>
 	<section class="services" use:reveal>
 		<span class="kicker">{c.svcKicker}</span>
 		<h2>{c.svcTitle}</h2>
@@ -376,7 +377,7 @@
 
 <style>
 	.event {
-		margin: 4.5rem 0 0;
+		margin: 4.5rem 0;
 		padding: 1.6rem 1.75rem;
 		border: 1px dashed var(--event);
 		border-radius: var(--radius-lg);
@@ -444,7 +445,7 @@
 		}
 	}
 	.lab-teaser {
-		margin: 4.5rem 0 1rem;
+		margin: 4.5rem 0 0;
 		text-align: center;
 	}
 	.lab-teaser p {

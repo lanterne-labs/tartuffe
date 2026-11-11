@@ -21,7 +21,8 @@
 
 	// The nav's menus (the event's pages, the About pages) open on a click or
 	// a tap, on hover with a mouse, and close on Escape, outside, or on a new
-	// page. One is open at a time.
+	// page. One is open at a time. The event's pill itself is a link to its
+	// presentation: its caret opens the menu.
 	type Menu = 'event' | 'about' | 'main';
 	let openMenu = $state<Menu | null>(null);
 	let menuEls = $state<Record<Menu, HTMLElement | null>>({ event: null, about: null, main: null });
@@ -62,21 +63,26 @@
 			{#if featured}
 				{@const ep = eventPaths(featured.slug)}
 				<div class="nav-drop nav-event" class:open={openMenu === 'event'} bind:this={menuEls.event} onfocusout={(e) => onMenuFocusOut('event', e)}>
-					<button
-						class="nav-link nav-link--poll"
-						class:active={pathname.startsWith('/election/')}
-						aria-haspopup="true"
-						aria-expanded={openMenu === 'event'}
-						aria-controls="event-menu"
-						title={tr('event.label', lang)}
-						onclick={() => toggleMenu('event')}
-					>
-						<span class="poll-tag">{tr('event.tag_short', lang)}</span>
-						<span class="poll-title">{lang === 'en' ? featured.title_en : featured.title_fr}</span>
-						<!-- On a phone the title does not fit: the year says it. -->
-						<span class="poll-title-short">{featured.title_fr.match(/\d{4}/)?.[0] ?? featured.title_fr}</span>
-						<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-					</button>
+					<!-- The pill is a link to the event's presentation; its caret opens
+					     the menu of the event's pages (a mouse also opens it on hover). -->
+					<div class="nav-link nav-link--poll" class:active={pathname.startsWith('/election/')}>
+						<a class="poll-go" href={ep.intro} title={tr('event.label', lang)}>
+							<span class="poll-tag">{tr('event.tag_short', lang)}</span>
+							<span class="poll-title">{lang === 'en' ? featured.title_en : featured.title_fr}</span>
+							<!-- On a phone the title does not fit: the year says it. -->
+							<span class="poll-title-short">{featured.title_fr.match(/\d{4}/)?.[0] ?? featured.title_fr}</span>
+						</a>
+						<button
+							class="poll-caret"
+							aria-haspopup="true"
+							aria-expanded={openMenu === 'event'}
+							aria-controls="event-menu"
+							aria-label={tr('event.menu.label', lang)}
+							onclick={() => toggleMenu('event')}
+						>
+							<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+						</button>
+					</div>
 					<div class="drop-menu" id="event-menu">
 						{#each [['intro', ep.intro], ['vote', ep.vote], ['how', ep.how], ['verify', ep.verify]] as [k, href] (k)}
 							<a {href} class:active={pathname === href} aria-current={pathname === href ? 'page' : undefined}>
@@ -285,15 +291,30 @@
 	.nav-link--poll {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.4rem;
 		max-width: 100%;
 		white-space: nowrap;
 		color: var(--text-primary);
-		padding: 0.25rem 0.6rem 0.25rem 0.3rem;
 		border: 1px solid var(--event);
 		border-radius: var(--radius-full);
 		background: var(--event-glow);
-		font-family: inherit;
+	}
+	.poll-go {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		min-width: 0;
+		padding: 0.25rem 0.15rem 0.25rem 0.3rem;
+		color: inherit;
+		text-decoration: none;
+	}
+	.poll-caret {
+		display: inline-flex;
+		align-items: center;
+		align-self: stretch;
+		padding: 0 0.55rem 0 0.25rem;
+		border: none;
+		background: none;
+		color: inherit;
 		cursor: pointer;
 	}
 	.poll-title {
@@ -541,7 +562,8 @@
 	   bar stays as tall) and grow their tap area around them. */
 	@media (pointer: coarse) {
 		.lang-pill,
-		.nav-link--poll {
+		.poll-go,
+		.poll-caret {
 			position: relative;
 		}
 		.lang-pill::after {
@@ -549,10 +571,19 @@
 			position: absolute;
 			inset: -0.45rem -1px;
 		}
-		.nav-link--poll::after {
+		.poll-go::after {
 			content: '';
 			position: absolute;
 			inset: -0.25rem 0;
+		}
+		/* The caret's own tap area: wide enough for a finger, never over the link. */
+		.poll-caret {
+			padding: 0 0.7rem 0 0.5rem;
+		}
+		.poll-caret::after {
+			content: '';
+			position: absolute;
+			inset: -0.25rem -0.25rem -0.25rem 0;
 		}
 	}
 
@@ -588,7 +619,9 @@
 			min-width: 0;
 			min-height: 2rem;
 			font-size: 0.8rem;
-			padding: 0.25rem 0.5rem 0.25rem 0.6rem;
+		}
+		.poll-go {
+			padding-left: 0.6rem;
 		}
 		.drop-menu {
 			position: fixed;
