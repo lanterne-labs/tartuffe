@@ -337,12 +337,15 @@ const (
 // contradiction and no person (PersonID 0). QuoteTweetID is the tweet of the
 // person it quotes, when one of the two facts is that tweet.
 type XPost struct {
-	ID                int64
-	Kind              string
-	ContradictionID   *int64
-	PersonID          int64
-	QuoteTweetID      *string
-	Slot              time.Time
+	ID              int64
+	Kind            string
+	ContradictionID *int64
+	PersonID        int64
+	QuoteTweetID    *string
+	Slot            time.Time
+	// PostAt is when the tweet goes out: the slot moved by the bot's random
+	// offset (zero at the insert: the slot).
+	PostAt            time.Time
 	Variants          []string
 	Tags              []string
 	Chosen            *string
@@ -353,11 +356,11 @@ type XPost struct {
 	CreatedAt         time.Time
 }
 
-const xPostColumns = `id, kind, contradiction_id, COALESCE(person_id, 0), quote_tweet_id, slot, variants, tags, chosen, status, telegram_message_id, tweet_id, error, created_at`
+const xPostColumns = `id, kind, contradiction_id, COALESCE(person_id, 0), quote_tweet_id, slot, COALESCE(post_at, slot), variants, tags, chosen, status, telegram_message_id, tweet_id, error, created_at`
 
 func scanXPost(row pgx.CollectableRow) (XPost, error) {
 	var p XPost
-	err := row.Scan(&p.ID, &p.Kind, &p.ContradictionID, &p.PersonID, &p.QuoteTweetID, &p.Slot, &p.Variants, &p.Tags, &p.Chosen, &p.Status,
+	err := row.Scan(&p.ID, &p.Kind, &p.ContradictionID, &p.PersonID, &p.QuoteTweetID, &p.Slot, &p.PostAt, &p.Variants, &p.Tags, &p.Chosen, &p.Status,
 		&p.TelegramMessageID, &p.TweetID, &p.Error, &p.CreatedAt)
 	return p, err
 }
@@ -376,11 +379,14 @@ func (s *PostgresStorer) InsertXPost(ctx context.Context, p XPost) (int64, error
 	if p.Kind == "" {
 		p.Kind = XPostContradiction
 	}
+	if p.PostAt.IsZero() {
+		p.PostAt = p.Slot
+	}
 	var id int64
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO x_posts (kind, contradiction_id, person_id, quote_tweet_id, slot, variants, tags, status)
-		VALUES ($1, $2, NULLIF($3, 0), $4, $5, $6, $7, 'draft') RETURNING id`,
-		p.Kind, p.ContradictionID, p.PersonID, p.QuoteTweetID, p.Slot, p.Variants, p.Tags).Scan(&id)
+		INSERT INTO x_posts (kind, contradiction_id, person_id, quote_tweet_id, slot, post_at, variants, tags, status)
+		VALUES ($1, $2, NULLIF($3, 0), $4, $5, $6, $7, $8, 'draft') RETURNING id`,
+		p.Kind, p.ContradictionID, p.PersonID, p.QuoteTweetID, p.Slot, p.PostAt, p.Variants, p.Tags).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert x post: %w", err)
 	}
@@ -455,6 +461,16 @@ func (s *PostgresStorer) SetXPostTelegram(ctx context.Context, id, messageID int
 	return nil
 }
 
+// ReviseXPost gives a draft its new versions and the Telegram message that
+// shows them; it returns false when the tweet was no longer a draft.
+func (s *PostgresStorer) ReviseXPost(ctx context.Context, id int64, variants []string, messageID int64) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE x_posts SET variants = $2, telegram_message_id = $3 WHERE id = $1 AND status = 'draft'`, id, variants, messageID)
+	if err != nil {
+		return false, fmt.Errorf("revise x post %d: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // DecideXPost moves a draft to status (approved with its chosen text,
 // skipped, false); it returns false when the tweet was no longer a draft.
 func (s *PostgresStorer) DecideXPost(ctx context.Context, id int64, status string, chosen *string) (bool, error) {
@@ -467,9 +483,9 @@ func (s *PostgresStorer) DecideXPost(ctx context.Context, id int64, status strin
 	return tag.RowsAffected() == 1, nil
 }
 
-// DueXPosts returns the approved tweets whose slot has come.
+// DueXPosts returns the approved tweets whose time has come.
 func (s *PostgresStorer) DueXPosts(ctx context.Context, now time.Time) ([]XPost, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+xPostColumns+` FROM x_posts WHERE status = 'approved' AND slot <= $1 ORDER BY slot`, now)
+	rows, err := s.pool.Query(ctx, `SELECT `+xPostColumns+` FROM x_posts WHERE status = 'approved' AND COALESCE(post_at, slot) <= $1 ORDER BY COALESCE(post_at, slot)`, now)
 	if err != nil {
 		return nil, fmt.Errorf("due x posts: %w", err)
 	}
