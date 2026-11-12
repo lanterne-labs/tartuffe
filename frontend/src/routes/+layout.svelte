@@ -31,7 +31,11 @@
 		title: 'tartuffe.me',
 		description: 'tartuffe.me, un projet de Lanterne Labs, laboratoire indépendant d’outils pour une démocratie plus transparente : le détecteur de contradictions des responsables politiques, et des expériences de vote en ligne privé.'
 	};
-	let meta = $derived({ ...defaultMeta, ...(($page.data as { meta?: { title?: string; description?: string; image?: string } })?.meta ?? {}) });
+	// A page without an image of its own (a person's page has the photo) shows
+	// the logo: X draws an empty grey box for a link without one. A PNG: X
+	// reads no SVG (static/og-logo.svg is its source).
+	let pageMeta = $derived((($page.data as { meta?: { title?: string; description?: string; image?: string } })?.meta ?? {}));
+	let meta = $derived({ ...defaultMeta, ...pageMeta, image: pageMeta.image ?? $page.url.origin + '/og-logo.png' });
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => {
@@ -70,10 +74,8 @@
 	<meta property="og:url" content={$page.url.href} />
 	<meta property="og:title" content={meta.title} />
 	<meta property="og:description" content={meta.description} />
-	{#if meta.image}
-		<meta property="og:image" content={meta.image} />
-		<meta name="twitter:image" content={meta.image} />
-	{/if}
+	<meta property="og:image" content={meta.image} />
+	<meta name="twitter:image" content={meta.image} />
 	<meta name="twitter:card" content="summary" />
 	<meta name="twitter:title" content={meta.title} />
 	<meta name="twitter:description" content={meta.description} />
