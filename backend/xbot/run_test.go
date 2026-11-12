@@ -279,6 +279,48 @@ func TestBotReplyAndExpiry(t *testing.T) {
 	assert.Equal(t, 2, n, "no draft during the silence")
 }
 
+// TestBotVoteTags: a vote tweet tags the approved accounts of the vote's
+// categories, never a party, a suggested account or a person's own; a
+// rewrite keeps them; posting marks them tagged, so the next tweet takes
+// others.
+func TestBotVoteTags(t *testing.T) {
+	b, _, poster, pool := testBot(t)
+	ctx := context.Background()
+	b.Slots = nil
+	b.VoteSlots = []Clock{{12, 0}}
+	b.Vote = func(context.Context, time.Time) (*VoteState, error) {
+		return &VoteState{Slug: "presidentielle-2027", MaxChoices: 3}, nil
+	}
+	_, err := pool.Exec(ctx, `TRUNCATE x_accounts; INSERT INTO x_accounts (handle, category, status, person_id) VALUES
+		('anticor_org', 'association', 'approved', NULL), ('unepersonnalite', 'personality', 'approved', NULL),
+		('rnational_off', 'party', 'approved', NULL), ('libe', 'outlet', 'suggested', NULL), ('jdupont', 'other', 'approved', 1)`)
+	require.NoError(t, err)
+	require.NoError(t, b.Tick(ctx))
+	var tags, variants []string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT tags, variants FROM x_posts WHERE id = 1`).Scan(&tags, &variants))
+	assert.ElementsMatch(t, []string{"anticor_org", "unepersonnalite"}, tags)
+	assert.True(t, strings.HasSuffix(variants[0], "\n\n@"+strings.Join(tags, " @")+"\nhttps://tartuffe.me/election/presidentielle-2027"), variants[0])
+	assert.LessOrEqual(t, Length(variants[0]), MaxLength)
+
+	var msg int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT telegram_message_id FROM x_posts WHERE id = 1`).Scan(&msg))
+	w := b.Writer.(*fakeWriter)
+	w.reply = Reply{Standard: "Votez pour 2027.", Satirical: ""}
+	require.NoError(t, b.Handle(ctx, Update{ReplyTo: msg, Text: "plus court"}))
+	assert.NotContains(t, w.prompt, "@anticor_org", "the writer gets the text without the tags")
+	require.NoError(t, pool.QueryRow(ctx, `SELECT variants FROM x_posts WHERE id = 1`).Scan(&variants))
+	require.Len(t, variants, 1)
+	assert.True(t, strings.HasPrefix(variants[0], "Votez pour 2027.\n\n@"), variants[0])
+
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "p:1:1"}))
+	b.Now = func() time.Time { return time.Date(2026, 11, 10, 12, 0, 0, 0, b.Zone) }
+	require.NoError(t, b.Tick(ctx))
+	require.Len(t, poster.posted, 1)
+	var tagged int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_accounts WHERE last_tagged_at IS NOT NULL`).Scan(&tagged))
+	assert.Equal(t, 2, tagged)
+}
+
 // TestBotVoteRevise: a reply to a vote draft asks for other versions: the
 // writer gets the request, the draft and what may be said of the vote; the
 // new versions come with the link and buttons of their own; a version with a
@@ -304,7 +346,7 @@ func TestBotVoteRevise(t *testing.T) {
 	var variants []string
 	var revised int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT variants, telegram_message_id FROM x_posts WHERE id = 1`).Scan(&variants, &revised))
-	require.Equal(t, []string{"2027 se prépare : votez, anonymement.\nhttps://tartuffe.me/election/presidentielle-2027"}, variants, "the version with a mention is dropped")
+	require.Equal(t, []string{"2027 se prépare : votez, anonymement.\n\n@lemondefr\nhttps://tartuffe.me/election/presidentielle-2027"}, variants, "the version with a mention is dropped")
 	assert.NotEqual(t, msg, revised)
 	assert.Equal(t, "draft", postStatus(t, pool, 1))
 
@@ -313,11 +355,11 @@ func TestBotVoteRevise(t *testing.T) {
 	b.Now = func() time.Time { return time.Date(2026, 11, 10, 12, 0, 0, 0, b.Zone) }
 	require.NoError(t, b.Tick(ctx))
 	require.Len(t, poster.posted, 1)
-	assert.Equal(t, "Mon appel au vote.", poster.posted[0])
+	assert.Equal(t, "Mon appel au vote.\n\n@lemondefr", poster.posted[0], "the tags are added to a text without any")
 }
 
 // TestBotVoteTweet: a vote slot drafts the call to vote, a tap publishes it
-// at its slot; it quotes nothing and tags nobody; without an open vote the
+// at its slot; it quotes nothing and tags the approved outlet; without an open vote the
 // slot is left. A contradiction whose fact is the person's own tweet is
 // posted as a quote of it.
 func TestBotVoteTweet(t *testing.T) {
@@ -359,7 +401,8 @@ func TestBotVoteTweet(t *testing.T) {
 	require.Len(t, poster.posted, 2)
 	assert.Contains(t, poster.posted[1], "https://tartuffe.me/election/presidentielle-2027")
 	assert.Contains(t, poster.posted[1], "Déjà 301 bulletins.")
-	assert.NotContains(t, poster.posted[1], "@")
+	assert.Contains(t, poster.posted[1], "\n\n@lemondefr\n", "the approved outlet is tagged, nobody else")
+	assert.NotContains(t, poster.posted[1], "@jdupont")
 	assert.Empty(t, poster.quoted[1])
 	assert.Equal(t, "posted", postStatus(t, pool, 2))
 

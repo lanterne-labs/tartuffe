@@ -72,7 +72,7 @@ var botDraftCmd = &cobra.Command{
 			}
 			fmt.Printf("%s: %d ballots counted (results may be tweeted from %d)\n", v.Slug, v.Counted, xbot.StandingsFrom)
 			for i := 0; i < botDraftN; i++ {
-				t := xbot.VoteTweet(v, n+i, botDraftSite)
+				t := xbot.VoteTweet(v, n+i, botDraftSite, nil)
 				fmt.Printf("--- (%d chars)\n%s\n", xbot.Length(t), t)
 			}
 			return nil

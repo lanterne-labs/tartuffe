@@ -149,7 +149,7 @@ func TestVoteTweet(t *testing.T) {
 	v := &VoteState{Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 50, Counted: 2}
 	seen := map[string]bool{}
 	for i := range voteTexts {
-		tw := VoteTweet(v, i, "https://tartuffe.me/")
+		tw := VoteTweet(v, i, "https://tartuffe.me/", nil)
 		assert.LessOrEqual(t, Length(tw), MaxLength, tw)
 		assert.True(t, strings.HasSuffix(tw, "\nhttps://tartuffe.me/election/presidentielle-2027"), tw)
 		assert.NotContains(t, tw, "%")
@@ -157,12 +157,12 @@ func TestVoteTweet(t *testing.T) {
 		seen[tw] = true
 	}
 	assert.Len(t, seen, len(voteTexts))
-	assert.Equal(t, VoteTweet(v, 0, "https://tartuffe.me"), VoteTweet(v, len(voteTexts), "https://tartuffe.me"), "the texts come in turn")
-	assert.Contains(t, VoteTweet(v, 0, "https://tartuffe.me"), "jusqu'à 3 candidats")
+	assert.Equal(t, VoteTweet(v, 0, "https://tartuffe.me", nil), VoteTweet(v, len(voteTexts), "https://tartuffe.me", nil), "the texts come in turn")
+	assert.Contains(t, VoteTweet(v, 0, "https://tartuffe.me", nil), "jusqu'à 3 candidats")
 	v.Counted = 412
 	for i := range voteTexts {
-		tw := VoteTweet(v, i, "https://tartuffe.me")
+		tw := VoteTweet(v, i, "https://tartuffe.me", nil)
 		assert.LessOrEqual(t, Length(tw), MaxLength, tw)
 	}
-	assert.Contains(t, VoteTweet(v, 1, "https://tartuffe.me"), "Déjà 412 bulletins.")
+	assert.Contains(t, VoteTweet(v, 1, "https://tartuffe.me", nil), "Déjà 412 bulletins.")
 }

@@ -45,7 +45,7 @@ The editor who approves the tweets asks: %q
 
 Write two new versions that follow the editor's request: "standard" stays factual, "satirical" may be lighter and playful.
 Rules, all of them:
-- French only, natural and current, no hashtags, one emoji at most, no @mentions and no links: the link is added after.
+- French only, natural and current, no hashtags, one emoji at most, no @mentions and no links: the tags and the link are added after.
 - At most %d characters each.
 - No fact, figure or promise about the vote that is not in the lines above. Never call it an official vote or a poll. Name no candidate and no party, and give no result.
 - No insult, nothing against a person.
@@ -56,14 +56,14 @@ Reply in JSON, the reasoning first and the tweets last:
 }
 
 // ReviseVote writes the vote tweet again as the request says, and keeps the
-// versions that pass the checks, each with the link of the vote. dropped
-// tells why a version was not kept.
-func ReviseVote(ctx context.Context, w Writer, v *VoteState, site string, previous []string, request string) (versions, dropped []string, err error) {
-	link := VoteLink(site, v.Slug)
-	room := MaxLength - 1 - LinkLength
+// versions that pass the checks, each with the tags of the draft and the
+// link of the vote. dropped tells why a version was not kept.
+func ReviseVote(ctx context.Context, w Writer, v *VoteState, site string, tags, previous []string, request string) (versions, dropped []string, err error) {
+	suffix := voteSuffix(tags, VoteLink(site, v.Slug))
+	room := MaxLength - Length(suffix)
 	var bare []string
 	for _, p := range previous {
-		bare = append(bare, strings.TrimSpace(strings.TrimSuffix(p, link)))
+		bare = append(bare, strings.TrimSpace(strings.TrimSuffix(p, suffix)))
 	}
 	reply, err := w.Write(ctx, VoteRevisionPrompt(v, bare, request, room))
 	if err != nil {
@@ -75,7 +75,7 @@ func ReviseVote(ctx context.Context, w Writer, v *VoteState, site string, previo
 			dropped = append(dropped, st.Label+", "+why+": "+t)
 			continue
 		}
-		versions = append(versions, t+"\n"+link)
+		versions = append(versions, t+suffix)
 	}
 	return versions, dropped, nil
 }

@@ -46,18 +46,19 @@ func VoteLink(site, slug string) string {
 }
 
 // VoteTweet is the n-th call to vote, with the ballots counted so far once
-// the event shows its results (its minimum of voters) and the link.
-func VoteTweet(v *VoteState, n int, site string) string {
+// the event shows its results (its minimum of voters), its tags (VoteTags;
+// nil: none) and the link.
+func VoteTweet(v *VoteState, n int, site string, tags []string) string {
 	text := voteTexts[n%len(voteTexts)]
 	if strings.Contains(text, "%d") {
 		text = fmt.Sprintf(text, v.MaxChoices)
 	}
 	if v.MinVoters > 0 && v.Counted >= v.MinVoters {
-		if with := text + fmt.Sprintf(" Déjà %d bulletins.", v.Counted); Length(with)+1+LinkLength <= MaxLength {
+		if with := text + fmt.Sprintf(" Déjà %d bulletins.", v.Counted); Length(with+voteSuffix(tags, VoteLink(site, v.Slug))) <= MaxLength {
 			text = with
 		}
 	}
-	return text + "\n" + VoteLink(site, v.Slug)
+	return text + voteSuffix(tags, VoteLink(site, v.Slug))
 }
 
 // DraftVote sends the vote tweet of a slot to Telegram. No open vote: the
@@ -78,9 +79,17 @@ func (b *Bot) DraftVote(ctx context.Context, slot time.Time) error {
 	if err != nil {
 		return err
 	}
-	text := VoteTweet(v, n, b.Site)
+	tags, err := VoteTags(ctx, b.Store)
+	if err != nil {
+		return err
+	}
+	// The tags that do not fit beside the text are left out, the last first.
+	for len(tags) > 0 && Length(VoteTweet(v, n, b.Site, tags)) > MaxLength {
+		tags = tags[:len(tags)-1]
+	}
+	text := VoteTweet(v, n, b.Site, tags)
 	at := b.postAt(slot)
-	id, err := b.Store.InsertXPost(ctx, storage.XPost{Kind: storage.XPostVote, Slot: slot, PostAt: at, Variants: []string{text}})
+	id, err := b.Store.InsertXPost(ctx, storage.XPost{Kind: storage.XPostVote, Slot: slot, PostAt: at, Variants: []string{text}, Tags: tags})
 	if err != nil {
 		return err
 	}
