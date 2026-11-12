@@ -24,6 +24,31 @@ export interface PersonSummary {
 	// The period the statements were collected over (the person route only).
 	collected_from?: string;
 	collected_to?: string;
+	// The date of the person's latest statement or act that contradicts
+	// another of theirs (the person route only), and the precision of a
+	// statement date ('year', 'month', 'day'; absent: a source's full date).
+	last_contradiction_at?: string;
+	last_contradiction_precision?: string | null;
+}
+
+// A step of a podium: the score and the facts are those of its week.
+export interface PodiumEntry {
+	rank: number;
+	id: number;
+	slug: string;
+	name: string;
+	image_url?: string;
+	honesty_score: number;
+	fact_count: number;
+}
+
+// GET /api/podium[?week=YYYY-MM-DD]: the live podium, or the one a past week
+// ended on; weeks are the past weeks that have one, the latest first.
+export interface PodiumWeek {
+	week: string;
+	live: boolean;
+	persons: PodiumEntry[];
+	weeks: string[];
 }
 
 export interface FactWithSource {

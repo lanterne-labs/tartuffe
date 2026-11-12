@@ -589,6 +589,11 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	if _, err := storer.RecomputeAllHonestyScores(ctx, false); err != nil {
 		errs = append(errs, fmt.Errorf("recomputing the scores: %w", err))
 	}
+	// The podium of the week, at the scores just written: a week keeps the
+	// podium of its last pass (the site's history of the podium).
+	if _, err := storer.RecordPodiumSnapshot(ctx, h.now()); err != nil {
+		errs = append(errs, err)
+	}
 	// The quality gauges after each pass make their history (Grafana, Quality).
 	if _, err := storer.RecordQualityMetrics(ctx); err != nil {
 		errs = append(errs, err)

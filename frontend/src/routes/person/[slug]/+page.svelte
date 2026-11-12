@@ -15,6 +15,7 @@
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
 	import CoverageChart from '$lib/components/CoverageChart.svelte';
+	import { statementDateText } from '$lib/dates';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import ReportButton from '$lib/components/ReportButton.svelte';
 	import LikeButton from '$lib/components/LikeButton.svelte';
@@ -443,6 +444,22 @@
 		return tr('person.collected', currentLang, { from: month(person.collected_from), to: month(person.collected_to) });
 	});
 
+	// How long since the person's latest statement or act that contradicts
+	// another of theirs: in days, or the date itself when only its month or
+	// year is known (a count of days from a "2013" would be made up).
+	let lastContradiction = $derived.by(() => {
+		const iso = person?.last_contradiction_at;
+		if (!iso) return '';
+		const precision = person?.last_contradiction_precision;
+		if (precision === 'year' || precision === 'month') {
+			return tr('person.last_contradiction_date', currentLang, { date: statementDateText(iso, precision, currentLang) });
+		}
+		const days = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+		if (days === 0) return tr('person.last_contradiction_today', currentLang);
+		if (days === 1) return tr('person.last_contradiction_day', currentLang);
+		return tr('person.last_contradiction_days', currentLang, { n: days.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') });
+	});
+
 	function formatDate(dateString: string): string {
 		return new Date(dateString).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 	}
@@ -554,6 +571,7 @@
 						<span class="dot">·</span>&nbsp;<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					</p>
 					{#if collected}<p class="hero-summary">{collected}</p>{/if}
+					{#if lastContradiction}<p class="hero-summary" title={tr('person.last_contradiction_hint', currentLang)}>{lastContradiction}</p>{/if}
 					{#if !person.candidate}
 						<p class="hero-note">{tr('person.detection_paused_note', currentLang)}</p>
 					{/if}

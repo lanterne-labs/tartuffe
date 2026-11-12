@@ -132,7 +132,7 @@
 				{ href: CODE, icon: 'code', title: 'Le code', body: 'Le site est open source : la collecte, la détection, le calcul du score. Lisez-le, vérifiez-le, corrigez-le.', cta: 'Voir le code' }
 			],
 			aboutLink: 'Comment le score est calculé',
-			podiumKicker: 'Aujourd’hui',
+			podiumKicker: 'Le podium',
 			podiumLink: 'Tout le classement',
 
 			evTag: 'Expérience temporaire de Lanterne Labs',
@@ -187,7 +187,7 @@
 				{ href: CODE, icon: 'code', title: 'The code', body: 'The site is open source: the collection, the detection, the score. Read it, check it, fix it.', cta: 'See the code' }
 			],
 			aboutLink: 'How the score is computed',
-			podiumKicker: 'Today',
+			podiumKicker: 'The podium',
 			podiumLink: 'The whole ranking',
 
 			evTag: 'A temporary experiment by Lanterne Labs',

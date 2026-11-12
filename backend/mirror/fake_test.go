@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/accounts"
 	"digital-mirror/backend/accounts/accountstest"
@@ -26,6 +28,9 @@ type fakeStore struct {
 		candidate                string
 	}
 	ranked []storage.PersonSummary
+
+	livePodium []storage.PodiumEntry
+	podiums    map[string][]storage.PodiumEntry // by week, YYYY-MM-DD
 
 	members    []storage.MemberInfo
 	membersErr error
@@ -134,4 +139,26 @@ func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+func (f *fakeStore) LivePodium(context.Context) ([]storage.PodiumEntry, error) {
+	return f.livePodium, nil
+}
+
+func (f *fakeStore) PodiumSnapshot(_ context.Context, week time.Time) ([]storage.PodiumEntry, error) {
+	if e, ok := f.podiums[week.Format(time.DateOnly)]; ok {
+		return e, nil
+	}
+	return []storage.PodiumEntry{}, nil
+}
+
+func (f *fakeStore) PodiumWeeks(_ context.Context, before time.Time) ([]time.Time, error) {
+	weeks := []time.Time{}
+	for k := range f.podiums {
+		if w, _ := time.Parse(time.DateOnly, k); w.Before(before) {
+			weeks = append(weeks, w)
+		}
+	}
+	sort.Slice(weeks, func(i, j int) bool { return weeks[i].After(weeks[j]) })
+	return weeks, nil
 }

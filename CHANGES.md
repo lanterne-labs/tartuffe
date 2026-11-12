@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-12: The podium keeps its weeks, and a person's page counts the days since their last contradiction
+
+- **The podium's history.** The podium was computed in the browser from the live scores: last week's was gone. The maintenance pass now ends by writing the live podium as the snapshot of the current week (`podium_snapshots`: week, rank, person, the score and the facts of then; a second pass in the week replaces the first, so a week keeps the podium it ended on). `GET /api/podium[?week=YYYY-MM-DD]` gives the live podium or a past week's, with the list of the past weeks; `Podium.svelte` reads it and shows two arrows and the week ("Cette semaine", "Semaine du 2 novembre 2026") once a past week exists. The rule of the podium (candidates, reliable score, lowest first) moved from the component to `storage.LivePodium`, so the site and the snapshot cannot differ.
+- **The history starts now.** No past podium is rebuilt: a past week's scores at that week's rate and reliability were never stored, and the history curve of a person replays today's record, not what the site showed. The arrows appear with the first week that ends after the deploy.
+- **The days since the last contradiction.** `GET /api/person/{id}` gives `last_contradiction_at`: the latest dated fact among the person's contradictions, at the date the site shows for a fact (the statement date, else the first source). The page prints "Dernière contradiction : il y a 12 jours" under the period covered; when the statement is only dated to a month or a year it prints that ("mars 2024", "2013") instead of days it does not know. It is the date of the statement, not of the detection: a contradiction found today between two statements of 2019 does not reset the count.
+
 ## 2026-11-11: The score compares the contradictions with those expected of the facts
 
 The formula `exp(-1.5·B/max(F,75) - 0.09·B - 0.125·ln(1+E))` counted the contradictions and nothing else once a person had a few hundred facts: 15 contradictions read 76 among 300 facts, 75 among 1 000 and 74 among 5 000. But whoever speaks a lot ends up contradicting themselves a little, and the facts are meant to grow fast.

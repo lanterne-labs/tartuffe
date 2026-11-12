@@ -6,34 +6,60 @@
 	// steps, the first in the middle and the highest; the list stays in rank
 	// order for a reader, the steps are placed with `order`. On the landing
 	// page and the dashboard.
+	//
+	// The arrows go back through the weeks: the API keeps the podium each
+	// past week ended on (GET /api/podium?week=), with the scores of then.
 	import { onMount } from 'svelte';
 	import TartuffeScore from './TartuffeScore.svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
 	import { personPath } from '$lib/share';
-	import type { PersonSummary } from '$lib/types';
+	import type { PodiumWeek } from '$lib/types';
 
 	interface Props {
 		lang: Lang;
 	}
 	let { lang }: Props = $props();
 
-	const SIZE = 3;
-	const MIN_FACTS = 3;
-
-	let worst: PersonSummary[] = $state([]);
+	// The podium shown; null until the first answer.
+	let podium = $state<PodiumWeek | null>(null);
 	let loading = $state(true);
+	// The podiums already read, by week ('' is the live one): an arrow back
+	// to a week seen is instant.
+	const seen = new Map<string, PodiumWeek>();
 
-	onMount(load);
+	let persons = $derived(podium?.persons ?? []);
+	// The weeks to walk, the latest first: the live one, then the past ones.
+	let weeks = $derived(['', ...(podium?.weeks ?? [])]);
+	let at = $derived(podium && !podium.live ? weeks.indexOf(podium.week) : 0);
+	let older = $derived(at >= 0 && at + 1 < weeks.length ? weeks[at + 1] : null);
+	let newer = $derived(at > 0 ? weeks[at - 1] : null);
+	let weekLabel = $derived.by(() => {
+		if (!podium || podium.live) return tr('home.podium_this_week', lang);
+		const day = new Date(podium.week + 'T00:00:00Z').toLocaleDateString(lang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+		return tr('home.podium_week_of', lang, { day });
+	});
+
+	onMount(() => load());
+	// load reads the live podium again (the dashboard's refresh).
 	export async function load() {
+		seen.delete('');
+		await show('');
+	}
+
+	async function show(week: string) {
+		const cached = seen.get(week);
+		if (cached) {
+			podium = cached;
+			return;
+		}
 		try {
 			loading = true;
-			// Among the candidates only (only they are judged) and among those
-			// whose score is reliable: enough contradictions expected.
-			const qs = new URLSearchParams({ limit: '100', sort: 'honesty_asc', min_facts: String(MIN_FACTS), candidate: 'true' });
-			const res = await fetch(`${API_BASE}/api/persons?${qs}`);
+			const res = await fetch(`${API_BASE}/api/podium${week ? `?week=${week}` : ''}`);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			worst = (((await res.json()) as PersonSummary[] | null) ?? []).filter((p) => p.score_reliable !== false).slice(0, SIZE);
+			const got = (await res.json()) as PodiumWeek;
+			seen.set(week, got);
+			podium = got;
 		} catch (err) {
 			// Non-fatal: the podium shows "no data"; the page's own banner offers the retry.
 			console.error('failed to load the podium', err);
@@ -47,8 +73,15 @@
 	<header class="podium-header">
 		<h2 id="podium-title">{tr('home.least_honest', lang)}</h2>
 		<p>{tr('home.podium_sub', lang)}</p>
+		{#if weeks.length > 1}
+			<nav class="weeks" aria-label={tr('home.podium_weeks', lang)}>
+				<button type="button" class="arrow" disabled={older === null || loading} onclick={() => older !== null && show(older)} aria-label={tr('home.podium_older', lang)}>‹</button>
+				<span class="week" aria-live="polite">{weekLabel}</span>
+				<button type="button" class="arrow" disabled={newer === null || loading} onclick={() => newer !== null && show(newer)} aria-label={tr('home.podium_newer', lang)}>›</button>
+			</nav>
+		{/if}
 	</header>
-	{#if loading && worst.length === 0}
+	{#if loading && persons.length === 0}
 		<ol class="podium" aria-busy="true">
 			{#each [1, 2, 3] as rank (rank)}
 				<li class="step step--{rank}">
@@ -58,18 +91,18 @@
 				</li>
 			{/each}
 		</ol>
-	{:else if worst.length === 0}
+	{:else if persons.length === 0}
 		<p class="empty">{tr('home.no_data', lang)}</p>
 	{:else}
-		<ol class="podium">
-			{#each worst as person, i (person.id)}
-				<li class="step step--{i + 1}">
+		<ol class="podium" class:fading={loading}>
+			{#each persons as person (person.id)}
+				<li class="step step--{person.rank}">
 					<a href={personPath(person.slug)} class="laureate">
-						<TartuffeScore honesty={person.honesty_score} {lang} size={i === 0 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} />
+						<TartuffeScore honesty={person.honesty_score} {lang} size={person.rank === 1 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={true} />
 						<span class="name">{person.name}</span>
 						<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', lang)}</span>
 					</a>
-					<div class="block"><span class="pos">{i + 1}</span></div>
+					<div class="block"><span class="pos">{person.rank}</span></div>
 				</li>
 			{/each}
 		</ol>
@@ -106,6 +139,53 @@
 		margin: 0.25rem 0 0;
 		font-size: 0.8rem;
 		color: var(--text-muted);
+	}
+
+	/* The weeks: an arrow back, the week shown, an arrow forward. */
+	.weeks {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		margin-top: 0.75rem;
+	}
+
+	.week {
+		min-width: 11.5rem;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.arrow {
+		width: 2rem;
+		height: 2rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0 0 0.15rem;
+		border-radius: 50%;
+		border: 1px solid var(--border-card);
+		background: transparent;
+		color: var(--text-primary);
+		font-size: 1.25rem;
+		line-height: 1;
+		cursor: pointer;
+		transition: background var(--transition-fast);
+	}
+
+	.arrow:hover:not(:disabled) {
+		background: var(--bg-card-hover);
+	}
+
+	.arrow:disabled {
+		opacity: 0.3;
+		cursor: default;
+	}
+
+	.podium.fading {
+		opacity: 0.5;
 	}
 
 	.podium {
@@ -212,6 +292,7 @@
 
 	@media (max-width: 480px) {
 		.podium { gap: 0.25rem; }
+		.week { min-width: 9.5rem; }
 		.podium-section { padding: 1rem 0.5rem 0; }
 		.name { font-size: 0.8rem; }
 		.step--1 .name { font-size: 0.9rem; }

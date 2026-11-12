@@ -8,6 +8,7 @@ package mirror
 
 import (
 	"context"
+	"time"
 
 	"digital-mirror/backend/accounts"
 	"digital-mirror/backend/core"
@@ -40,6 +41,11 @@ type Store interface {
 	GetShareTarget(ctx context.Context, kind string, id, personID int64) (*storage.ShareTarget, error)
 	GetScoreExplanation(ctx context.Context, personID int64) (*storage.ScoreExplanation, error)
 	ScoreBaseline(ctx context.Context) (core.ScoreBaseline, error)
+
+	// The podium, live and of the past weeks.
+	LivePodium(ctx context.Context) ([]storage.PodiumEntry, error)
+	PodiumSnapshot(ctx context.Context, week time.Time) ([]storage.PodiumEntry, error)
+	PodiumWeeks(ctx context.Context, before time.Time) ([]time.Time, error)
 
 	// What the users add: their +1 and their reports.
 	SetLike(ctx context.Context, userID int64, kind string, targetID int64, on bool) (int, error)
@@ -77,6 +83,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/person/{id}/score", s.handleScoreExplanation)
 	r.Get("/events", s.handleEventsSSE)
 	r.Get("/feed", s.handleFeed)
+	r.Get("/podium", s.handlePodium)
 	r.Get("/share/{kind}/{id}", s.handleShare)
 	r.Get("/corrections", s.handleCorrections)
 	r.Post("/reports", need(s.handleCreateReport))
