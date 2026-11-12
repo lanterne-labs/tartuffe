@@ -39,9 +39,9 @@ type ClaudeTeamEndpoint struct {
 	// CallTimeout bounds one CLI process. 0 means claudeTeamCallTimeout.
 	CallTimeout time.Duration
 
-	// Reserve keeps the end of the last seat for the reserved tasks
-	// (Task.Reserved: the X bot's tweets): the other tasks leave the seat
-	// while the reserve holds it. nil: no reserve. See package seatreserve.
+	// Reserve keeps the end of the last seat that has room for the reserved
+	// tasks (Task.Reserved: the X bot's tweets): the other tasks leave the
+	// seat it names. nil: no reserve. See package seatreserve.
 	Reserve *seatreserve.Reserve
 
 	mu    sync.Mutex
@@ -101,27 +101,39 @@ type claudeSeat struct {
 	held time.Time
 }
 
-// holdReserve asks the reserve about the last seat before a call that is not
-// reserved, and holds the seat for the reserved tasks when it says so.
+// holdReserve gives the reserve the seats that are not at their limit
+// before a call that is not reserved, and holds for the reserved tasks the
+// seat it names: the last one with room. No seat named: no seat is held.
 func (t *ClaudeTeamEndpoint) holdReserve(ctx context.Context) {
-	if t.Reserve == nil || len(t.seats) == 0 {
+	if t.Reserve == nil {
 		return
 	}
-	i := len(t.seats) - 1
+	now := time.Now()
+	var serving []seatreserve.Seat
 	t.mu.Lock()
-	s := t.seats[i]
+	for i := range t.seats {
+		if s := &t.seats[i]; !now.Before(s.down) {
+			serving = append(serving, seatreserve.Seat{Name: s.name, Token: s.token})
+		}
+	}
 	t.mu.Unlock()
-	if !s.blocked(time.Now(), false).IsZero() {
-		return // down or held already: nothing to read
-	}
-	until := t.Reserve.Check(ctx, s.name, s.token)
-	if until.IsZero() {
-		return
-	}
+	name, until := t.Reserve.Hold(ctx, serving)
 	t.mu.Lock()
-	t.seats[i].held = until
-	t.wakeLocked()
-	t.mu.Unlock()
+	defer t.mu.Unlock()
+	changed := false
+	for i := range t.seats {
+		s := &t.seats[i]
+		held := time.Time{}
+		if name != "" && s.name == name {
+			held = until
+		}
+		if !s.held.Equal(held) {
+			s.held, changed = held, true
+		}
+	}
+	if changed {
+		t.wakeLocked()
+	}
 }
 
 // blocked returns the time until which the seat does not serve a call
