@@ -368,6 +368,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'person.streak.days': { fr: 'jours sans contradiction', en: 'days without a contradiction' },
 	'person.streak.last': { fr: 'Dernière le {d}', en: 'Latest on {d}' },
 	'person.latest': { fr: 'Ses dernières contradictions', en: 'Their latest contradictions' },
+	'person.stances.help': { fr: 'Une position est un sujet sur lequel la personne s’est exprimée (par exemple « Retraites » ou « Guerre en Ukraine »). Elle regroupe tous ses faits sur ce sujet, dans l’ordre : déclarations, votes, promesses. C’est à l’intérieur d’une position que l’on cherche les contradictions, et chacune a son propre score.', en: 'A stance is a topic the person has spoken on (for example “Pensions” or “War in Ukraine”). It gathers all their facts on that topic, in order: statements, votes, pledges. Contradictions are looked for inside a stance, and each one has its own score.' },
+	'person.stances.help_label': { fr: 'Qu’est-ce qu’une position ?', en: 'What is a stance?' },
 	'person.latest.all': { fr: 'Toutes', en: 'All' },
 	'person.stances.sub': { fr: 'Une carte par sujet : ce qui a été dit et fait, dans l’ordre.', en: 'One card per topic: what was said and done, in order.' },
 	'feed.side': { fr: 'En ce moment', en: 'Right now' },

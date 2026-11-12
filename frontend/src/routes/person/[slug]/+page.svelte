@@ -21,6 +21,7 @@
 	import LikeButton from '$lib/components/LikeButton.svelte';
 	import { authFetch } from '$lib/auth';
 	import ClashCard from '$lib/components/ClashCard.svelte';
+	import Help from '$lib/components/Help.svelte';
 	import type { FeedItem, FeedPage } from '$lib/types';
 	import type { ShareTarget } from '$lib/types';
 	import { tick } from 'svelte';
@@ -642,7 +643,7 @@
 					{/if}
 					<div><dt>{tr('person.stat.facts', currentLang)}</dt><dd>{count(person.fact_count)}</dd></div>
 					{#if scored}
-						<div><dt>{tr('person.stat.stances', currentLang)}</dt><dd>{count(person.stance_count)}</dd></div>
+						<div><dt>{tr('person.stat.stances', currentLang)} <Help text={tr('person.stances.help', currentLang)} label={tr('person.stances.help_label', currentLang)} align="end" /></dt><dd>{count(person.stance_count)}</dd></div>
 					{/if}
 				</dl>
 			</div>
@@ -749,7 +750,7 @@
 		<section class="stances-section">
 			<div class="stances-toolbar">
 				<div>
-					<h2 class="section-heading">{tr('person.stances', currentLang)}</h2>
+					<h2 class="section-heading">{tr('person.stances', currentLang)} <Help text={tr('person.stances.help', currentLang)} label={tr('person.stances.help_label', currentLang)} /></h2>
 					<p class="stances-sub">{tr('person.stances.sub', currentLang)}</p>
 				</div>
 				{#if stances.length > 1}
