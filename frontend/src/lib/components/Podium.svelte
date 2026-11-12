@@ -151,17 +151,22 @@
 		margin-bottom: 1.25rem;
 	}
 
+	/* The title is the size of the landing page's section titles, on the
+	   landing page and the dashboard alike. */
 	.podium-header h2 {
-		font-size: 1.1rem;
-		font-weight: 700;
+		font-family: var(--font-serif);
+		font-size: clamp(1.9rem, 5.5vw, 2.6rem);
+		font-weight: 600;
+		line-height: 1.1;
 		letter-spacing: -0.01em;
 		color: var(--red);
 		margin: 0;
+		text-wrap: balance;
 	}
 
 	.podium-header p {
-		margin: 0.25rem 0 0;
-		font-size: 0.8rem;
+		margin: 0.4rem 0 0;
+		font-size: 0.95rem;
 		color: var(--text-muted);
 	}
 

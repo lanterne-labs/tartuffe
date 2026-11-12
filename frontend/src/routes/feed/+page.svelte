@@ -366,11 +366,12 @@
 
 					<a href={link} class="body">
 						{#if it.kind === 'contradiction' && it.other}
-							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
-							<p class="line line-b"><span class="yr">{factYear(it.other.date, it.other.date_precision)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
+							<!-- Why they conflict first, then the two facts it is about. -->
 							{#if whyOf(it, currentLang)}
 								<p class="why">{whyOf(it, currentLang)}</p>
 							{/if}
+							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
+							<p class="line line-b"><span class="yr">{factYear(it.other.date, it.other.date_precision)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
 						{:else}
 							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
 						{/if}
@@ -862,7 +863,7 @@
 	}
 	/* Why the two lines conflict, in full: it is what makes the pair readable. */
 	.why {
-		margin: 0.7rem 0 0;
+		margin: 0 0 0.7rem;
 		padding: 0.55rem 0.75rem;
 		border-left: 2px solid var(--error-border);
 		background: var(--error-bg);

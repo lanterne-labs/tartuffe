@@ -128,6 +128,9 @@
 	<Modal {open} title={tr(`report.title.${kind}`, currentLang)} onclose={() => (open = false)} closeLabel={tr('auth.close', currentLang)}>
 		{#if pair}
 			<div class="pair">
+				{#if pair.reason}
+					<p class="found"><strong>{tr('report.pair.found', currentLang)}</strong> {pair.reason}</p>
+				{/if}
 				<div class="side">
 					<span class="side-label">{tr('report.pair.fact', currentLang, { n: 1 })}{#if pair.a.date}{' · '}{statementDateText(pair.a.date, pair.a.precision, currentLang) || day(pair.a.date)}{/if}</span>
 					<p>{pair.a.text}</p>
@@ -137,9 +140,6 @@
 					<span class="side-label">{tr('report.pair.fact', currentLang, { n: 2 })}{#if pair.b.date}{' · '}{statementDateText(pair.b.date, pair.b.precision, currentLang) || day(pair.b.date)}{/if}</span>
 					<p>{pair.b.text}</p>
 				</div>
-				{#if pair.reason}
-					<p class="found"><strong>{tr('report.pair.found', currentLang)}</strong> {pair.reason}</p>
-				{/if}
 			</div>
 		{:else}
 			<blockquote>{preview}</blockquote>
@@ -267,7 +267,7 @@
 		line-height: 1;
 	}
 	.found {
-		margin: 0.35rem 0 0;
+		margin: 0 0 0.35rem;
 		font-size: 0.85rem;
 		line-height: 1.5;
 		color: var(--text-secondary);

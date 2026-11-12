@@ -272,6 +272,10 @@
 				</div>
 				<div class="ex-body">
 					<div class="ex-facts">
+						<!-- Why they conflict first, then the two facts it is about. -->
+						{#if sides.why}
+							<p class="ex-why">{sides.why}</p>
+						{/if}
 						<div class="ex-fact">
 							<span class="ex-year">{sides.a.year}</span>
 							<p>{sides.a.text}</p>
@@ -283,9 +287,6 @@
 							<p>{sides.b.text}</p>
 							<span class="ex-src">{sides.b.src}</span>
 						</div>
-						{#if sides.why}
-							<p class="ex-why">{sides.why}</p>
-						{/if}
 					</div>
 					<div class="ex-score">
 						<TartuffeScore honesty={clash.person.honesty_score} lang={currentLang} size="lg" named={false} animate />
@@ -308,6 +309,7 @@
 				</div>
 				<div class="ex-body">
 					<div class="ex-facts">
+						<p class="ex-why">{c.exWhy}</p>
 						<div class="ex-fact">
 							<span class="ex-year">2019</span>
 							<p>{c.exSaid}</p>
@@ -319,7 +321,6 @@
 							<p>{c.exDid}</p>
 							<span class="ex-src">{c.exDidSrc}</span>
 						</div>
-						<p class="ex-why">{c.exWhy}</p>
 					</div>
 					<div class="ex-score">
 						<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
@@ -745,7 +746,7 @@
 	}
 	/* Why the two conflict: the context the two lines lack. */
 	.ex-why {
-		margin: 0.8rem 0 0;
+		margin: 0 0 0.8rem;
 		padding: 0.6rem 0.85rem;
 		border-left: 2px solid var(--error-border);
 		background: var(--error-bg);
