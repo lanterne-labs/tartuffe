@@ -133,3 +133,10 @@ func ReservedTokens(task Task, answerTokens int) int {
 	}
 	return answerTokens
 }
+
+// reservedTasks are the tasks that must always find a model: the endpoint of
+// the seats keeps the end of its last seat for them (package seatreserve).
+var reservedTasks = map[Task]bool{TaskTweet: true}
+
+// Reserved reports whether the task may use the reserve of the seats.
+func (t Task) Reserved() bool { return reservedTasks[t] }
