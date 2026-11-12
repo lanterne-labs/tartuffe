@@ -231,7 +231,7 @@ CLAUDE_TEAM_PLAN_SEAT=a          # optional: the seat to use first (the order th
 CLAUDE_TEAM_RESERVE_PERCENT=90   # the reserve of the last seat of the order (default 90, 0: none): once its 5 h or 7 d
                                  # usage reaches it, only the X bot's tweets (llm.TaskTweet) use that seat until the window
                                  # resets; the pipeline sees it as down. The usage is read from the rate-limit headers of a
-                                 # one-token request, at most once a minute (backend/llm/claude_team_reserve.go)
+                                 # one-token request, at most once a minute (the package backend/llm/seatreserve; `Task.Reserved`)
 ANTHROPIC_API_KEY=sk-ant-...     # Claude API key: the overflow of the seats on claude-team (optional: without it the
                                  # worker waits for the seat reset), and the goldens (make llm-goldens LLM_CLAUDE=...)
 
@@ -359,6 +359,7 @@ The Grafana dashboard **Operations** (`operations.json`) shows where each long o
 - **Database**: Use transactions for multi-step operations; connection pooling via pgxpool. `supabase db reset` is fine to run when needed (e.g., applying migrations). Prefer incremental migrations when possible.
 - **API**: REST with JSON, pagination via `limit` and `offset` query params
 - **Frontend**: TypeScript interfaces in `src/lib/types.ts`, API base in `src/lib/config.ts`
+- **A feature is a module.** A new capability gets its own package (or its own file with a narrow interface) that knows nothing of its callers; the existing code gets a small hook that calls it (`backend/llm/seatreserve` and `ClaudeTeamEndpoint.holdReserve`). Do not grow an existing type with the fields, the state and the logic of a new feature.
 - **No workarounds**: Fix the root cause of issues rather than creating workarounds to bypass them
 - **Searching**: Use `ack` for searching code - it's faster and smarter than grep, automatically ignores version control directories and binary files
 

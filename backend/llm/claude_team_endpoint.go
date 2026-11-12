@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"digital-mirror/backend/llm/seatreserve"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -37,21 +39,13 @@ type ClaudeTeamEndpoint struct {
 	// CallTimeout bounds one CLI process. 0 means claudeTeamCallTimeout.
 	CallTimeout time.Duration
 
-	// ReservePercent keeps the end of the last seat for the reserved tasks
-	// (the X bot's tweets): once the seat's 5 h or 7 d usage reaches this
-	// percentage, every other task leaves the seat until that window resets.
-	// 0: no reserve. See claude_team_reserve.go.
-	ReservePercent float64
-	// probe reads the usage of a seat; nil: probeSeatUsage. The tests fake it.
-	probe func(ctx context.Context, token string) (seatUsage, error)
+	// Reserve keeps the end of the last seat for the reserved tasks
+	// (Task.Reserved: the X bot's tweets): the other tasks leave the seat
+	// while the reserve holds it. nil: no reserve. See package seatreserve.
+	Reserve *seatreserve.Reserve
 
 	mu    sync.Mutex
 	seats []claudeSeat // in the order of use; the tokens are never logged
-	// probed is the time of the last usage reading of the reserved seat (or
-	// of its start: one reading at a time); probeFailures counts the
-	// readings that failed in a row.
-	probed        time.Time
-	probeFailures int
 	// changed is closed (and replaced) when a process ends or a seat goes
 	// down: the calls that wait for a free process look again.
 	changed  chan struct{}
@@ -107,6 +101,29 @@ type claudeSeat struct {
 	held time.Time
 }
 
+// holdReserve asks the reserve about the last seat before a call that is not
+// reserved, and holds the seat for the reserved tasks when it says so.
+func (t *ClaudeTeamEndpoint) holdReserve(ctx context.Context) {
+	if t.Reserve == nil || len(t.seats) == 0 {
+		return
+	}
+	i := len(t.seats) - 1
+	t.mu.Lock()
+	s := t.seats[i]
+	t.mu.Unlock()
+	if !s.blocked(time.Now(), false).IsZero() {
+		return // down or held already: nothing to read
+	}
+	until := t.Reserve.Check(ctx, s.name, s.token)
+	if until.IsZero() {
+		return
+	}
+	t.mu.Lock()
+	t.seats[i].held = until
+	t.wakeLocked()
+	t.mu.Unlock()
+}
+
 // blocked returns the time until which the seat does not serve a call
 // (reserved: a call of a reserved task), zero when it serves now.
 func (s *claudeSeat) blocked(now time.Time, reserved bool) time.Time {
@@ -138,13 +155,13 @@ func NewClaudeTeamEndpointFromEnv() (*ClaudeTeamEndpoint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claude team endpoint: %w", err)
 	}
-	e := &ClaudeTeamEndpoint{Binary: bin, seats: seats, ReservePercent: defaultReservePercent}
+	e := &ClaudeTeamEndpoint{Binary: bin, seats: seats, Reserve: seatreserve.New(seatreserve.DefaultPercent)}
 	if v := strings.TrimSpace(os.Getenv("CLAUDE_TEAM_RESERVE_PERCENT")); v != "" {
 		pct, err := strconv.ParseFloat(v, 64)
 		if err != nil || pct < 0 || pct > 100 {
 			return nil, fmt.Errorf("CLAUDE_TEAM_RESERVE_PERCENT: %q is not a percentage (0: no reserve)", v)
 		}
-		e.ReservePercent = pct
+		e.Reserve = seatreserve.New(pct)
 	}
 	if v := strings.TrimSpace(os.Getenv("CLAUDE_TEAM_PLAN_PROCS_PER_SEAT")); v != "" {
 		n, err := strconv.Atoi(v)
@@ -239,9 +256,9 @@ func (t *ClaudeTeamEndpoint) Call(ctx context.Context, req ChatRequest, opts Cla
 	t.mu.Lock()
 	u := countTaskCall(&t.usage, req.Task, creq.Model)
 	t.mu.Unlock()
-	reserved := reservedTasks[req.Task]
+	reserved := req.Task.Reserved()
 	if !reserved {
-		t.checkReserve(ctx)
+		t.holdReserve(ctx)
 	}
 	text, res, err := t.callSeats(ctx, creq, system, prompt, req.wantsJSON(), reserved)
 	t.mu.Lock()
