@@ -11,6 +11,8 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 - **A change of week slides.** Towards the past the podium leaves to the right and the older one comes from the left, the other way back (`fly`, 380 ms; none for a reader who asked for less motion).
 - **The person page's record is in boxes.** The header had become a pile of lines (the counts, the period, the last contradiction, the note). Now each value has its box and its label, always in the same place: Faits, Positions, Contradictions on the first row, Période couverte and Dernière contradiction on the second; the link to the feed and the note on the AI come under them. On a phone the header is centred (it was left-aligned, which only showed once the long lines were gone).
 
+- **The feed opens on the contradictions.** It mixed the facts and the contradictions, and the facts (thousands a day) buried the contradictions; the choice was behind the filter icon. Now a switch stays in view under the title: Contradictions (the default, no `kind` in the URL), Faits (`kind=fact`), Les deux (`kind=all`). The API is unchanged (`kind` empty lists both); the link of a person to their feed opens on their contradictions too. The landing page leads to it with a button under the contradiction of the day (« Toutes les contradictions »).
+
 ## 2026-11-11: The score compares the contradictions with those expected of the facts
 
 The formula `exp(-1.5·B/max(F,75) - 0.09·B - 0.125·ln(1+E))` counted the contradictions and nothing else once a person had a few hundred facts: 15 contradictions read 76 among 300 facts, 75 among 1 000 and 74 among 5 000. But whoever speaks a lot ends up contradicting themselves a little, and the facts are meant to grow fast.

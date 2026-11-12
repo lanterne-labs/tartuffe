@@ -110,6 +110,8 @@
 			exTag: 'Exemple',
 			exTagLive: 'Aujourd’hui',
 			exLink: 'La fiche et les sources',
+			feedCta: 'Toutes les contradictions',
+			feedNote: 'Le fil : les contradictions des candidats, les plus récentes et les plus remarquées.',
 			exSaid: '« Je ne toucherai jamais à l’âge de départ à la retraite. »',
 			exSaidSrc: 'En interview',
 			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
@@ -165,6 +167,8 @@
 			exTag: 'Example',
 			exTagLive: 'Today',
 			exLink: 'The record and the sources',
+			feedCta: 'All the contradictions',
+			feedNote: 'The feed: the candidates’ contradictions, the latest and the most noticed.',
 			exSaid: '“I will never touch the retirement age.”',
 			exSaidSrc: 'Interview',
 			exDid: 'Votes to raise the retirement age to 64.',
@@ -326,6 +330,16 @@
 					</div>
 				</div>
 			{/if}
+		</div>
+
+		<!-- From one contradiction to all of them: the feed. -->
+		<div class="feed-cta">
+			<a class="cta cta-feed" href="/feed">
+				<span class="cta-mark" aria-hidden="true">⟷</span>
+				{c.feedCta}
+				<span class="cta-arrow" aria-hidden="true">→</span>
+			</a>
+			<p>{c.feedNote}</p>
 		</div>
 
 		<div class="how">
@@ -519,6 +533,45 @@
 	.cta:hover {
 		background: var(--accent-hover);
 		color: var(--on-accent);
+	}
+	/* The way to the feed, under the contradiction of the day. */
+	.feed-cta {
+		margin-top: 1.75rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.feed-cta p {
+		margin: 0;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+		max-width: 34rem;
+	}
+	.cta-feed {
+		gap: 0.6rem;
+		padding: 0.9rem 1.6rem;
+		font-size: 1.05rem;
+		background: var(--red);
+		color: #fff;
+		box-shadow: 0 6px 22px rgba(220, 38, 38, 0.28);
+		transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
+	}
+	.cta-feed:hover {
+		background: var(--red);
+		color: #fff;
+		transform: translateY(-1px);
+		box-shadow: 0 10px 28px rgba(220, 38, 38, 0.38);
+	}
+	.cta-mark {
+		font-size: 1.1rem;
+		line-height: 1;
+	}
+	.cta-arrow {
+		transition: transform 0.15s;
+	}
+	.cta-feed:hover .cta-arrow {
+		transform: translateX(3px);
 	}
 	.cta-ghost {
 		background: transparent;
