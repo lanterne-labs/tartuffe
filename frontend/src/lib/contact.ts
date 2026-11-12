@@ -7,6 +7,10 @@ export const CONTACT_EMAIL = 'lanternelabs@proton.me';
 // gave their identity to the host and publishes only the host's details.
 export const PUBLISHER: { name: string; address?: string } | null = null;
 
+// The lab's own site: wherever the site names Lanterne Labs, it links there.
+export const LAB_URL = 'https://lanternelabs.net';
+export const LAB_DOMAIN = 'lanternelabs.net';
+
 export function mailto(subject: string): string {
 	return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}`;
 }

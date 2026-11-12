@@ -2,6 +2,7 @@
 	// The fonts are served by the site itself: no request leaves for a font
 	// host (privacy: Google Fonts would see every visitor's address).
 	import '@fontsource/inter/400.css';
+	import { LAB_URL, LAB_DOMAIN } from '$lib/contact';
 	import '@fontsource/inter/500.css';
 	import '@fontsource/inter/600.css';
 	import '@fontsource/inter/700.css';
@@ -92,7 +93,7 @@
 {/key}
 
 <footer class="site-footer">
-	<p class="footer-lab">{tr('footer.lab', currentLang)}</p>
+	<p class="footer-lab">{tr('footer.lab', currentLang)} <a href={LAB_URL} target="_blank" rel="noopener">{LAB_DOMAIN}&nbsp;↗</a></p>
 	<!-- The dot is drawn by CSS on every link but the first, so a wrapped
 	     line never ends with one. -->
 	<ul class="footer-links">
@@ -105,6 +106,11 @@
 		<li><a href="/mentions-legales">{tr('nav.legal', currentLang)}</a></li>
 	</ul>
 	<ul class="footer-social">
+		<li>
+			<a href={LAB_URL} target="_blank" rel="noopener" aria-label="Lanterne Labs — {LAB_DOMAIN}" title={LAB_DOMAIN}>
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm6.93 6h-2.95a15.7 15.7 0 0 0-1.38-3.56A8.03 8.03 0 0 1 18.93 8zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14a8.2 8.2 0 0 1 0-4h3.38a16.5 16.5 0 0 0 0 4H4.26zm.81 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.99 7.99 0 0 1 5.07 16zm2.95-8H5.07a7.99 7.99 0 0 1 4.33-3.56A15.7 15.7 0 0 0 8.02 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66a14.7 14.7 0 0 1 0-4h4.68a14.7 14.7 0 0 1 0 4zm.26 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 0 1-4.33 3.56zM16.36 14a16.5 16.5 0 0 0 0-4h3.38a8.2 8.2 0 0 1 0 4h-3.38z"/></svg>
+			</a>
+		</li>
 		<li>
 			<a href="https://x.com/lanternelabs" target="_blank" rel="noopener" aria-label="Lanterne Labs — X" title="X">
 				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import TartuffeScore, { tartuffeOf } from '$lib/components/TartuffeScore.svelte';
+	import { LAB_URL, LAB_DOMAIN } from '$lib/contact';
 	// The landing page: the contradiction checker first (the question, the
 	// podium of the day, the contradiction of the day from the feed and its
 	// score, or a made-up example while it loads), then the lab (Lanterne Labs), then its temporary event, the
@@ -353,7 +354,7 @@
 		<span class="kicker">{c.labKicker}</span>
 		<h2>{c.labTitle}</h2>
 		<p>{c.labBody}</p>
-		<p class="more"><a href="/lab">{c.labCta} →</a></p>
+		<p class="more"><a href="/lab">{c.labCta} →</a> <span class="more-sep" aria-hidden="true">·</span> <a href={LAB_URL} target="_blank" rel="noopener">{LAB_DOMAIN}&nbsp;↗</a></p>
 	</section>
 
 	<section class="event" use:reveal>
@@ -846,6 +847,10 @@
 	}
 	.more a {
 		color: var(--text-secondary);
+	}
+	.more-sep {
+		margin: 0 0.4rem;
+		color: var(--text-muted);
 	}
 	/* The rise, drawn as the feed's ticker: a red ▲ and the change. */
 	.ex-rise {

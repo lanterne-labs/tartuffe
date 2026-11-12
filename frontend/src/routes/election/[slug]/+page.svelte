@@ -5,6 +5,7 @@
 	// diagram), the polls it answers, and the next milestone of voters. The
 	// vote itself is on /voter; how it works is on /fonctionnement, not here.
 	import { onMount } from 'svelte';
+	import { LAB_URL, LAB_DOMAIN } from '$lib/contact';
 	import { page } from '$app/stores';
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { eventPaths, votersShown } from '$lib/event';
@@ -347,7 +348,7 @@
 			<a class="btn-alt" href={paths.how}>{c.how}</a>
 		</div>
 		<p class="disclaimer">{c.disclaimer}</p>
-		<p class="lab-line">{tr('event.who', currentLang)} <a href="/lab" style="white-space: nowrap">{c.labLink} →</a></p>
+		<p class="lab-line">{tr('event.who', currentLang)} <a href="/lab" style="white-space: nowrap">{c.labLink} →</a> · <a href={LAB_URL} target="_blank" rel="noopener" style="white-space: nowrap">{LAB_DOMAIN} ↗</a></p>
 	</section>
 </article>
 

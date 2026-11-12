@@ -16,6 +16,8 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 - **The explanation of a contradiction comes first.** It came after the two facts, so a reader met two sentences before knowing what opposed them. Now it leads everywhere a contradiction is shown: the feed, the contradiction of the day on the landing page, the report dialog, and the person page, where a group of one pair opens on its explanation above the two facts (a fact contradicted by several keeps each explanation at the head of its pair, under the fact they share). The explanations are not rewritten: the prompt (`promptrules.ExplanationPrompt`) still tells the writer the reader has the two facts next to it, which holds.
 - **« Les plus tartuffes » is a title.** The podium's heading was 1.1rem, smaller than the names under it; it now has the size and the face of the landing page's section titles, on the landing page and the dashboard.
 
+- **The site links to lanternelabs.net.** It named Lanterne Labs in a dozen places and linked only to its own `/lab` page, X and GitHub. The lab's site (`LAB_URL`, `frontend/src/lib/contact.ts`) is now linked from the footer of every page (in the sentence on the lab and as an icon beside X and GitHub), the lab page (a button under its lead), the lab section of the landing page, the about page and the event page.
+
 ## 2026-11-11: The score compares the contradictions with those expected of the facts
 
 The formula `exp(-1.5·B/max(F,75) - 0.09·B - 0.125·ln(1+E))` counted the contradictions and nothing else once a person had a few hundred facts: 15 contradictions read 76 among 300 facts, 75 among 1 000 and 74 among 5 000. But whoever speaks a lot ends up contradicting themselves a little, and the facts are meant to grow fast.
