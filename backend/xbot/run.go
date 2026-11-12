@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -27,8 +28,9 @@ type Clock struct{ Hour, Min int }
 // Bot runs the X bot: before each slot it drafts a tweet and sends it to
 // Telegram; a tap approves a version, skips the draft or marks the
 // contradiction false; a reply to the draft gives the text instead; an
-// approved tweet is posted at its slot, a draft still undecided an hour after
-// its slot expires.
+// approved tweet is posted at its slot, or at once when approved later. A
+// draft waits for its decision as long as it takes (XBOT_GRACE_HOURS sets an
+// end).
 type Bot struct {
 	Store    *storage.PostgresStorer
 	Writer   Writer
@@ -48,8 +50,12 @@ type Bot struct {
 	Vote      func(ctx context.Context, t time.Time) (*VoteState, error)
 	Zone      *time.Location
 	// Lead is how long before its slot a draft is sent; Grace how long after
-	// its slot a draft may still be approved.
+	// its slot a draft may still be approved (0: it never expires).
 	Lead, Grace time.Duration
+	// Jitter moves each tweet from its slot by a random time within it,
+	// earlier or later, so the hours of the bot are not predictable. The
+	// draft is sent Lead before the earliest time the tweet may go out.
+	Jitter time.Duration
 	// Site is the site of the links; Link adds the contradiction's link to
 	// the tweet (X bills a tweet with a link more).
 	Site string
@@ -59,7 +65,9 @@ type Bot struct {
 
 // Config is the bot's settings from the environment: XBOT_SLOTS (default
 // "12:00,19:00", Europe/Paris), XBOT_VOTE_SLOTS (default "09:00,16:00";
-// "none": no vote tweet), XBOT_LINK (default false), XBOT_SITE.
+// "none": no vote tweet), XBOT_LINK (default false), XBOT_SITE,
+// XBOT_GRACE_HOURS (default 0: a draft never expires), XBOT_JITTER_HOURS
+// (default 2: a tweet goes out up to 2 h before or after its slot).
 func (b *Bot) Config() error {
 	zone, err := time.LoadLocation("Europe/Paris")
 	if err != nil {
@@ -92,11 +100,23 @@ func (b *Bot) Config() error {
 	if b.Site == "" {
 		b.Site = "https://tartuffe.me"
 	}
+	b.Jitter = 2 * time.Hour
+	if v := os.Getenv("XBOT_JITTER_HOURS"); v != "" {
+		h, err := strconv.ParseFloat(v, 64)
+		if err != nil || h < 0 {
+			return fmt.Errorf("XBOT_JITTER_HOURS %q: a number of hours, 0 for the slot itself", v)
+		}
+		b.Jitter = time.Duration(h * float64(time.Hour))
+	}
 	if b.Lead == 0 {
 		b.Lead = time.Hour
 	}
-	if b.Grace == 0 {
-		b.Grace = time.Hour
+	if v := os.Getenv("XBOT_GRACE_HOURS"); v != "" {
+		h, err := strconv.ParseFloat(v, 64)
+		if err != nil || h < 0 {
+			return fmt.Errorf("XBOT_GRACE_HOURS %q: a number of hours, 0 for no expiry", v)
+		}
+		b.Grace = time.Duration(h * float64(time.Hour))
 	}
 	if b.Now == nil {
 		b.Now = time.Now
@@ -185,8 +205,18 @@ func (b *Bot) nextSlots(slots []Clock, from, to time.Time) []time.Time {
 	return out
 }
 
+// postAt is when the tweet of a slot goes out: the slot moved by a random
+// time within Jitter, to the minute.
+func (b *Bot) postAt(slot time.Time) time.Time {
+	minutes := int64(b.Jitter / time.Minute)
+	if minutes <= 0 {
+		return slot
+	}
+	return slot.Add(time.Duration(rand.Int63n(2*minutes+1)-minutes) * time.Minute)
+}
+
 // Tick drafts the slots due within Lead, posts the approved tweets whose slot
-// came, and expires the drafts past their grace.
+// came, and expires the drafts past their grace when there is one.
 func (b *Bot) Tick(ctx context.Context) error {
 	now := b.Now()
 	if err := b.draftSlots(ctx, b.Slots, now, b.Draft); err != nil {
@@ -198,6 +228,9 @@ func (b *Bot) Tick(ctx context.Context) error {
 	if err := b.PostDue(ctx); err != nil {
 		return err
 	}
+	if b.Grace <= 0 {
+		return nil
+	}
 	expired, err := b.Store.ExpireXPosts(ctx, now.Add(-b.Grace))
 	if err != nil {
 		return err
@@ -208,10 +241,11 @@ func (b *Bot) Tick(ctx context.Context) error {
 	return nil
 }
 
-// draftSlots drafts the slots due within Lead that hold no tweet yet and are
-// not under the electoral silence.
+// draftSlots drafts the slots due within Lead of the earliest time their
+// tweet may go out (Lead + Jitter before the slot) that hold no tweet yet and
+// are not under the electoral silence.
 func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, draft func(context.Context, time.Time) error) error {
-	for _, slot := range b.nextSlots(slots, now, now.Add(b.Lead)) {
+	for _, slot := range b.nextSlots(slots, now, now.Add(b.Lead+b.Jitter)) {
 		taken, err := b.Store.XPostSlotTaken(ctx, slot)
 		if err != nil {
 			return err
@@ -277,15 +311,16 @@ func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 			quote = &d.QuoteID
 		}
 		cid := c.ID
-		id, err := b.Store.InsertXPost(ctx, storage.XPost{ContradictionID: &cid, PersonID: c.PersonID, QuoteTweetID: quote, Slot: slot, Variants: d.Versions, Tags: d.Tags})
+		at := b.postAt(slot)
+		id, err := b.Store.InsertXPost(ctx, storage.XPost{ContradictionID: &cid, PersonID: c.PersonID, QuoteTweetID: quote, Slot: slot, PostAt: at, Variants: d.Versions, Tags: d.Tags})
 		if err != nil {
 			return err
 		}
-		msg, err := b.Telegram.Send(ctx, DraftMessage(d, slot.In(b.Zone), b.Site), draftButtons(id, d.Labels))
+		msg, err := b.Telegram.Send(ctx, DraftMessage(d, at.In(b.Zone), b.Site), draftButtons(id, d.Labels))
 		if err != nil {
 			return fmt.Errorf("send draft %d: %w", id, err)
 		}
-		log.Info().Int64("post", id).Int64("contradiction", c.ID).Time("slot", slot).Msg("xbot: draft sent")
+		log.Info().Int64("post", id).Int64("contradiction", c.ID).Time("slot", slot).Time("post_at", at).Msg("xbot: draft sent")
 		return b.Store.SetXPostTelegram(ctx, id, msg)
 	}
 	log.Warn().Time("slot", slot).Msg("xbot: nothing to tweet for this slot")
@@ -305,8 +340,9 @@ func draftButtons(id int64, labels []string) [][]Button {
 }
 
 // DraftMessage is the Telegram message of a draft: the two facts with their
-// sources, the reason, the versions, how to answer.
-func DraftMessage(d *Draft, slot time.Time, site string) string {
+// sources, the reason, the versions, how to answer. at is when the tweet
+// goes out once approved.
+func DraftMessage(d *Draft, at time.Time, site string) string {
 	c := d.Contradiction
 	esc := html.EscapeString
 	var b strings.Builder
@@ -314,7 +350,7 @@ func DraftMessage(d *Draft, slot time.Time, site string) string {
 	if c.Reviewed {
 		reviewed = "revue : réelle"
 	}
-	fmt.Fprintf(&b, "🐦 <b>Tweet de %s</b>\n<b>%s</b> · %s · %s\n\n", slot.Format("02/01 15:04"), esc(c.PersonName), esc(c.StanceLabel), reviewed)
+	fmt.Fprintf(&b, "🐦 <b>Tweet de %s</b>\n<b>%s</b> · %s · %s\n\n", at.Format("02/01 15:04"), esc(c.PersonName), esc(c.StanceLabel), reviewed)
 	side := func(label string, f storage.BotFact) {
 		day := f.DateFR()
 		if day == "" {
@@ -341,7 +377,7 @@ func DraftMessage(d *Draft, slot time.Time, site string) string {
 	for i, v := range d.Versions {
 		fmt.Fprintf(&b, "\n<b>%s</b> (%d car.)\n<pre>%s</pre>\n", esc(label(d, i)), Length(v), esc(v))
 	}
-	b.WriteString("\nPour publier votre propre texte : répondez à ce message avec le tweet (les tags sont ajoutés s'il n'en a pas).")
+	b.WriteString("\nPour d'autres versions : répondez à ce message avec votre demande (« plus drôle », « ne cite pas toute la phrase »).\nPour publier votre propre texte : répondez avec <code>=</code> suivi du tweet (les tags sont ajoutés s'il n'en a pas).")
 	return b.String()
 }
 
@@ -381,6 +417,22 @@ func (b *Bot) Handle(ctx context.Context, u Update) error {
 		return err
 	}
 	text := strings.TrimSpace(u.Text)
+	if p.Status != "draft" {
+		_, err := b.Telegram.Send(ctx, "Ce tweet est déjà décidé ("+p.Status+") : rien n'a changé.", nil)
+		return err
+	}
+	// A reply is a request for other versions; "=" before it makes it the
+	// tweet itself. A vote tweet has no writer: its reply is the tweet.
+	own := p.ContradictionID == nil
+	if rest, ok := strings.CutPrefix(text, "="); ok {
+		own, text = true, strings.TrimSpace(rest)
+	}
+	if text == "" {
+		return nil
+	}
+	if !own {
+		return b.revise(ctx, p, text)
+	}
 	if !strings.Contains(text, "@") && len(p.Tags) > 0 {
 		text += "\n\n@" + strings.Join(p.Tags, " @")
 	}
@@ -389,6 +441,61 @@ func (b *Bot) Handle(ctx context.Context, u Update) error {
 		return err
 	}
 	return b.approve(ctx, p, text)
+}
+
+// revise writes the versions of a draft again as the chat asked and sends
+// them as a new message with the buttons; the message before loses its own.
+// No version passes the checks, or the LLM is away: the draft stays as it is
+// and the chat is told.
+func (b *Bot) revise(ctx context.Context, p *storage.XPost, request string) error {
+	tell := func(text string) error {
+		_, err := b.Telegram.Send(ctx, text, nil)
+		return err
+	}
+	if err := tell("✍️ Je réécris : les nouvelles versions arrivent dans une minute ou deux."); err != nil {
+		return err
+	}
+	c, err := b.Store.GetBotContradiction(ctx, *p.ContradictionID)
+	if err != nil {
+		return fmt.Errorf("revise post %d: %w", p.ID, err)
+	}
+	link := ""
+	if b.Link {
+		link = ContradictionLink(b.Site, c)
+	}
+	d, err := Recompose(ctx, b.Writer, c, p.Tags, link, &Revision{Previous: p.Variants, Request: request})
+	if errors.Is(err, llm.ErrUnavailable) {
+		log.Warn().Err(err).Int64("post", p.ID).Msg("xbot: LLM unavailable for a revision")
+		return tell("Le modèle n'est pas disponible pour l'instant : le brouillon reste tel quel. Répondez à nouveau plus tard.")
+	}
+	if err != nil {
+		return fmt.Errorf("revise post %d: %w", p.ID, err)
+	}
+	if len(d.Versions) == 0 {
+		log.Warn().Int64("post", p.ID).Strs("dropped", d.Dropped).Msg("xbot: no revised version passed the checks")
+		return tell("Aucune nouvelle version n'a passé les contrôles ; le brouillon reste tel quel.\n<pre>" + html.EscapeString(strings.Join(d.Dropped, "\n")) + "</pre>")
+	}
+	pool, err := b.Store.BotTagPool(ctx, c, Domains(c))
+	if err != nil {
+		return err
+	}
+	if p.QuoteTweetID != nil {
+		_, d.QuoteLink = QuoteTarget(c, pool.Person)
+	}
+	msg, err := b.Telegram.Send(ctx, DraftMessage(d, p.PostAt.In(b.Zone), b.Site), draftButtons(p.ID, d.Labels))
+	if err != nil {
+		return fmt.Errorf("send revised draft %d: %w", p.ID, err)
+	}
+	ok, err := b.Store.ReviseXPost(ctx, p.ID, d.Versions, msg)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return b.Telegram.Edit(ctx, msg, "Ce tweet a été décidé entre-temps : ces versions sont abandonnées.", nil)
+	}
+	b.closeMessage(ctx, p, "🔁 Réécrit à votre demande : les nouvelles versions sont dans le message plus bas.")
+	log.Info().Int64("post", p.ID).Str("request", request).Msg("xbot: draft revised")
+	return nil
 }
 
 func (b *Bot) tap(ctx context.Context, u Update) (string, error) {
@@ -455,8 +562,8 @@ func (b *Bot) approve(ctx context.Context, p *storage.XPost, text string) error 
 		}
 	}
 	p.Chosen, p.Status = &text, "approved"
-	when := "sera publié à " + p.Slot.In(b.Zone).Format("15:04")
-	if !b.Now().Before(p.Slot) {
+	when := "sera publié à " + p.PostAt.In(b.Zone).Format("15:04")
+	if !b.Now().Before(p.PostAt) {
 		when = "publication…"
 	}
 	if b.Poster == nil {

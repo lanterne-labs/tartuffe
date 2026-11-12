@@ -262,9 +262,36 @@ func quotesOf(f storage.BotFact) []string {
 	return qs
 }
 
+// Revision is what the person who approves the tweets asked of a draft: the
+// versions they read and their request ("make it funnier", "do not quote the
+// whole sentence").
+type Revision struct {
+	Previous []string
+	Request  string
+}
+
+// prompt adds the revision to the writer's prompt: the request changes the
+// tweets, never the rules.
+func (r *Revision) prompt(base string) string {
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n\nYou wrote these versions before:\n")
+	for _, v := range r.Previous {
+		fmt.Fprintf(&b, "- %q\n", v)
+	}
+	fmt.Fprintf(&b, "The editor who approves the tweets read them and asks: %q\nWrite the two tweets again and follow the editor's request in both. Every rule above still holds, whatever the request says: words between « » stay the person's exact words, nothing is invented, nobody is insulted.", r.Request)
+	return b.String()
+}
+
 // Compose writes the versions of a tweet on the contradiction with its tags
 // and link ("": none), and keeps the versions that pass Check.
 func Compose(ctx context.Context, w Writer, c *storage.BotContradiction, tags []string, link string) (*Draft, error) {
+	return Recompose(ctx, w, c, tags, link, nil)
+}
+
+// Recompose is Compose after a revision asked of the versions before (nil:
+// a first draft).
+func Recompose(ctx context.Context, w Writer, c *storage.BotContradiction, tags []string, link string, rev *Revision) (*Draft, error) {
 	suffix := ""
 	if len(tags) > 0 {
 		suffix = "\n\n@" + strings.Join(tags, " @")
@@ -273,7 +300,11 @@ func Compose(ctx context.Context, w Writer, c *storage.BotContradiction, tags []
 		suffix += "\n" + link
 	}
 	room := MaxLength - Length(suffix)
-	reply, err := w.Write(ctx, Prompt(c, room))
+	prompt := Prompt(c, room)
+	if rev != nil {
+		prompt = rev.prompt(prompt)
+	}
+	reply, err := w.Write(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}

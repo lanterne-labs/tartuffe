@@ -170,6 +170,79 @@ func TestBotFlow(t *testing.T) {
 	assert.Equal(t, 0, left, "dismissed from the site")
 }
 
+// TestBotDraftWaits: without a grace a draft never expires, and a tap days
+// later still approves it; the tweet then goes out at once.
+func TestBotDraftWaits(t *testing.T) {
+	b, _, poster, pool := testBot(t)
+	b.Grace = 0
+	ctx := context.Background()
+	start := b.Now()
+	require.NoError(t, b.Tick(ctx))
+	b.Now = func() time.Time { return start.Add(72 * time.Hour) }
+	require.NoError(t, b.Tick(ctx))
+	assert.Equal(t, "draft", postStatus(t, pool, 1))
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "p:1:1", MessageID: 1}))
+	require.NoError(t, b.Tick(ctx))
+	assert.Equal(t, "posted", postStatus(t, pool, 1))
+	assert.Len(t, poster.posted, 1)
+}
+
+// TestBotRevise: a reply to a draft asks for other versions: the writer gets
+// the request and the versions before, the new versions come as a new
+// message whose buttons publish them, and the draft is still a draft.
+func TestBotRevise(t *testing.T) {
+	b, tg, poster, pool := testBot(t)
+	ctx := context.Background()
+	require.NoError(t, b.Tick(ctx))
+	w := b.Writer.(*fakeWriter)
+	w.reply = Reply{Standard: "Jean Dupont, en bref.", Satirical: "Jean Dupont, encore plus drôle."}
+	var msg int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT telegram_message_id FROM x_posts WHERE id = 1`).Scan(&msg))
+	require.NoError(t, b.Handle(ctx, Update{ReplyTo: msg, Text: "plus drôle, sans citation"}))
+	assert.Contains(t, w.prompt, "plus drôle, sans citation")
+	assert.Contains(t, w.prompt, "Jean Dupont, toujours constant.")
+	assert.Equal(t, "draft", postStatus(t, pool, 1))
+	var variants []string
+	var revised int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT variants, telegram_message_id FROM x_posts WHERE id = 1`).Scan(&variants, &revised))
+	require.Len(t, variants, 2)
+	assert.Contains(t, variants[1], "encore plus drôle")
+	assert.NotEqual(t, msg, revised, "a new message carries the new versions")
+	assert.Contains(t, tg.last("sendMessage")["text"], "encore plus drôle")
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "p:1:2", MessageID: revised}))
+	b.Now = func() time.Time { return time.Date(2026, 11, 10, 12, 0, 0, 0, b.Zone) }
+	require.NoError(t, b.Tick(ctx))
+	require.Len(t, poster.posted, 1)
+	assert.Contains(t, poster.posted[0], "encore plus drôle")
+}
+
+// TestBotJitter: the draft is sent Lead before the earliest time the tweet
+// may go out, the tweet gets a time within Jitter of its slot, and it goes
+// out at that time, not at the slot.
+func TestBotJitter(t *testing.T) {
+	b, _, poster, pool := testBot(t)
+	b.Jitter = 2 * time.Hour
+	ctx := context.Background()
+	slot := time.Date(2026, 11, 10, 12, 0, 0, 0, b.Zone)
+	b.Now = func() time.Time { return slot.Add(-3*time.Hour - time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	var n int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_posts`).Scan(&n))
+	assert.Equal(t, 0, n, "too early for a draft")
+	b.Now = func() time.Time { return slot.Add(-3 * time.Hour).Add(time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	var at time.Time
+	require.NoError(t, pool.QueryRow(ctx, `SELECT post_at FROM x_posts WHERE id = 1`).Scan(&at))
+	assert.False(t, at.Before(slot.Add(-2*time.Hour)) || at.After(slot.Add(2*time.Hour)), "post_at %s within 2 h of the slot", at)
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "p:1:1", MessageID: 1}))
+	b.Now = func() time.Time { return at.Add(-time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	assert.Empty(t, poster.posted, "not before its time")
+	b.Now = func() time.Time { return at }
+	require.NoError(t, b.Tick(ctx))
+	assert.Len(t, poster.posted, 1)
+}
+
 // TestBotReplyAndExpiry: a draft undecided past its grace expires; a reply
 // gives the text (the tags added) and, without the X keys, it waits; the
 // silence drafts nothing.
@@ -188,7 +261,7 @@ func TestBotReplyAndExpiry(t *testing.T) {
 	require.NoError(t, b.Tick(ctx))
 	var msg int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT telegram_message_id FROM x_posts WHERE id = 2`).Scan(&msg))
-	require.NoError(t, b.Handle(ctx, Update{ReplyTo: msg, Text: "Mon propre texte."}))
+	require.NoError(t, b.Handle(ctx, Update{ReplyTo: msg, Text: "= Mon propre texte."}))
 	assert.Equal(t, "approved", postStatus(t, pool, 2))
 	var chosen string
 	require.NoError(t, pool.QueryRow(ctx, `SELECT chosen FROM x_posts WHERE id = 2`).Scan(&chosen))

@@ -80,12 +80,13 @@ func (b *Bot) DraftVote(ctx context.Context, slot time.Time) error {
 		return err
 	}
 	text := VoteTweet(v, n, b.Site)
-	id, err := b.Store.InsertXPost(ctx, storage.XPost{Kind: storage.XPostVote, Slot: slot, Variants: []string{text}})
+	at := b.postAt(slot)
+	id, err := b.Store.InsertXPost(ctx, storage.XPost{Kind: storage.XPostVote, Slot: slot, PostAt: at, Variants: []string{text}})
 	if err != nil {
 		return err
 	}
 	var m strings.Builder
-	fmt.Fprintf(&m, "🗳 <b>Tweet du vote de %s</b>\n%d bulletins comptés\n", slot.In(b.Zone).Format("02/01 15:04"), v.Counted)
+	fmt.Fprintf(&m, "🗳 <b>Tweet du vote de %s</b>\n%d bulletins comptés\n", at.In(b.Zone).Format("02/01 15:04"), v.Counted)
 	if v.Counted >= StandingsFrom {
 		fmt.Fprintf(&m, "⚠️ Le seuil de %d bulletins est passé : les résultats peuvent être tweetés.\n", StandingsFrom)
 	}
