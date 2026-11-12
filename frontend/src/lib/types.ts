@@ -25,7 +25,7 @@ export interface PersonSummary {
 	collected_from?: string;
 	collected_to?: string;
 	// The date of the person's latest statement or act that contradicts
-	// another of theirs (the person route only), and the precision of a
+	// another of theirs, and the precision of a
 	// statement date ('year', 'month', 'day'; absent: a source's full date).
 	last_contradiction_at?: string;
 	last_contradiction_precision?: string | null;

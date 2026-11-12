@@ -65,6 +65,7 @@ func TestRoutes(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		"GET /health",
 		"GET /api/persons",
+		"GET /api/podium",
 		"GET /api/person/{id}",
 		"GET /api/person/{id}/facts",
 		"GET /api/person/{id}/contradictions",

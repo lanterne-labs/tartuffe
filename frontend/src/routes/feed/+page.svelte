@@ -22,7 +22,7 @@
 	import { authFetch, session } from '$lib/auth';
 	import type { FeedItem, FeedPage, PersonSummary } from '$lib/types';
 	import ClashCard from '$lib/components/ClashCard.svelte';
-	import { loadCandidates, loadStreaks, type Streak } from '$lib/streaks';
+	import { loadCandidates, streaksOf } from '$lib/streaks';
 	import { signInOpen } from '$lib/auth';
 	import { displayName, clip } from '$lib/share';
 
@@ -219,12 +219,11 @@
 	// backed the most this week (one of the week drawn at random while none
 	// has a +1).
 	let candidates: PersonSummary[] = $state([]);
-	let streaks: Streak[] = $state([]);
+	let streaks = $derived(streaksOf(candidates, currentLang));
 	let pick = $state<{ item: FeedItem; backed: boolean } | null>(null);
 	async function loadSide() {
 		try {
 			candidates = await loadCandidates();
-			streaks = await loadStreaks(candidates, currentLang);
 		} catch (err) {
 			console.error('failed to load the candidates of the feed', err);
 		}
@@ -613,29 +612,6 @@
 	.panel .filters {
 		margin-bottom: 0;
 	}
-	.sorts {
-		display: flex;
-		padding: 3px;
-		border-radius: var(--radius-full);
-		background: var(--bg-secondary);
-		border: 1px solid var(--glass-border);
-	}
-	.sort {
-		padding: 0.35rem 0.95rem;
-		border-radius: var(--radius-full);
-		border: none;
-		background: transparent;
-		color: var(--text-secondary);
-		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
-	.sort.active {
-		background: var(--bg-card);
-		color: var(--text-primary);
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-	}
 	/* The switch of what is listed: one track, three choices. */
 	.kinds {
 		display: flex;
@@ -645,27 +621,6 @@
 		border: 1px solid var(--border-card);
 		border-radius: var(--radius-full);
 		background: var(--bg-card);
-	}
-	.kind-tab {
-		flex: 1 1 0;
-		min-width: 0;
-		padding: 0.45rem 0.5rem;
-		border: none;
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--text-secondary);
-		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background var(--transition-fast), color var(--transition-fast);
-	}
-	.kind-tab:hover {
-		color: var(--text-primary);
-	}
-	.kind-tab.active {
-		background: var(--accent);
-		color: var(--on-accent);
 	}
 	.filters {
 		display: flex;
@@ -776,15 +731,9 @@
 	/* A finger needs more than a mouse: every control of the head and of
 	   the filter panel is at least 40px high. */
 	@media (pointer: coarse) {
-		.sort {
-			min-height: 2.5rem;
-		}
 		.filter-btn {
 			width: 2.5rem;
 			height: 2.5rem;
-		}
-		.kind-tab {
-			min-height: 2.5rem;
 		}
 		.picker input,
 		.day input,

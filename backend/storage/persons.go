@@ -416,7 +416,7 @@ type PersonSummary struct {
 	CollectedFrom *time.Time `json:"collected_from,omitempty"`
 	CollectedTo   *time.Time `json:"collected_to,omitempty"`
 	// LastContradictionAt is the date of the person's latest statement or
-	// act that contradicts another of theirs (GetPersonByID only): the
+	// act that contradicts another of theirs: the
 	// later fact of their most recent contradiction, at the date the site
 	// shows for it. LastContradictionPrecision is the precision of a
 	// statement date ("year", "month", "day"), absent for a source's date.
@@ -473,8 +473,64 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	if rows.Err() != nil {
 		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
 	}
+	rows.Close()
+
+	// The days without a contradiction show on every card of the list.
+	withOne := make([]*PersonSummary, 0, len(persons))
+	for i := range persons {
+		if persons[i].ContradictionCount > 0 {
+			withOne = append(withOne, &persons[i])
+		}
+	}
+	if err := s.fillLastContradictions(ctx, withOne); err != nil {
+		return nil, err
+	}
 
 	return persons, nil
+}
+
+// fillLastContradictions sets, on each person, the latest dated fact of
+// their contradictions (the later fact of a pair is the one that made the
+// contradiction), at the date the site shows for it, in one query.
+func (s *PostgresStorer) fillLastContradictions(ctx context.Context, persons []*PersonSummary) error {
+	if len(persons) == 0 {
+		return nil
+	}
+	byID := make(map[int64]*PersonSummary, len(persons))
+	ids := make([]int64, 0, len(persons))
+	for _, p := range persons {
+		byID[p.ID] = p
+		ids = append(ids, p.ID)
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (d.person_id) d.person_id, d.at, d.precision
+		FROM (
+			SELECT c.person_id,
+			       `+shownDateSQL("f", "(SELECT MIN(published_at) FROM fact_sources WHERE fact_id = f.id)")+` AS at,
+			       CASE WHEN f.statement_date IS NOT NULL THEN f.statement_date_precision END AS precision
+			FROM contradictions c
+			JOIN facts f ON f.id IN (c.fact_a_id, c.fact_b_id)
+			WHERE c.person_id = ANY($1)
+		) d
+		WHERE d.at IS NOT NULL AND d.at <= now()
+		ORDER BY d.person_id, d.at DESC`, ids)
+	if err != nil {
+		return fmt.Errorf("failed to query the last contradictions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var at *time.Time
+		var precision *string
+		if err := rows.Scan(&id, &at, &precision); err != nil {
+			return fmt.Errorf("failed to scan a last contradiction: %w", err)
+		}
+		byID[id].LastContradictionAt, byID[id].LastContradictionPrecision = at, precision
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating the last contradictions: %w", err)
+	}
+	return nil
 }
 
 // GetPersonLang returns the person's BCP-47 source language ("fr", "en", "de", ...)
@@ -533,24 +589,8 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 		            WHERE fm.person_id = $1) x) f`, personID).Scan(&person.CollectedFrom, &person.CollectedTo); err != nil {
 		return nil, fmt.Errorf("failed to query the collected period of person %d: %w", personID, err)
 	}
-	// The latest dated fact of the person's contradictions: the later fact
-	// of a pair is the one that made the contradiction.
-	err = s.pool.QueryRow(ctx, `
-		SELECT d.at, d.precision
-		FROM (
-			SELECT `+shownDateSQL("f", "(SELECT MIN(published_at) FROM fact_sources WHERE fact_id = f.id)")+` AS at,
-			       CASE WHEN f.statement_date IS NOT NULL THEN f.statement_date_precision END AS precision
-			FROM facts f
-			WHERE f.id IN (
-				SELECT fact_a_id FROM contradictions WHERE person_id = $1
-				UNION SELECT fact_b_id FROM contradictions WHERE person_id = $1
-			)
-		) d
-		WHERE d.at IS NOT NULL AND d.at <= now()
-		ORDER BY d.at DESC
-		LIMIT 1`, personID).Scan(&person.LastContradictionAt, &person.LastContradictionPrecision)
-	if err != nil && err != pgx.ErrNoRows {
-		return nil, fmt.Errorf("failed to query the last contradiction of person %d: %w", personID, err)
+	if err := s.fillLastContradictions(ctx, []*PersonSummary{&person}); err != nil {
+		return nil, err
 	}
 
 	return &person, nil

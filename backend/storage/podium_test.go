@@ -110,4 +110,21 @@ func TestPodiumSnapshots(t *testing.T) {
 	pb, err := storer.GetPersonByID(ctx, b)
 	require.NoError(t, err)
 	assert.Nil(t, pb.LastContradictionAt, "no contradiction")
+
+	// The list gives it too: the cards show the days without a contradiction.
+	list, err := storer.GetPersonsRankedByScore(ctx, 1000, 0, "", "", "", 0, "")
+	require.NoError(t, err)
+	seen := 0
+	for _, p := range list {
+		switch p.ID {
+		case a:
+			seen++
+			require.NotNil(t, p.LastContradictionAt)
+			assert.WithinDuration(t, last, *p.LastContradictionAt, time.Second)
+		case b:
+			seen++
+			assert.Nil(t, p.LastContradictionAt, "no contradiction")
+		}
+	}
+	assert.Equal(t, 2, seen, "a and b are in the list")
 }
