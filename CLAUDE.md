@@ -228,6 +228,10 @@ LLM_EXTRACTION_SHARE=0.6         # while the API key pays (every seat at its lim
 CLAUDE_TEAM_PLAN_TOKENS=a=...,b=...  # seat tokens of the Team plan, as name=token pairs, in the order of use:
                                  # a seat at its usage limit gives way to the next; the claude CLI must be on the PATH
 CLAUDE_TEAM_PLAN_SEAT=a          # optional: the seat to use first (the order then wraps around)
+CLAUDE_TEAM_RESERVE_PERCENT=90   # the reserve of the last seat of the order (default 90, 0: none): once its 5 h or 7 d
+                                 # usage reaches it, only the X bot's tweets (llm.TaskTweet) use that seat until the window
+                                 # resets; the pipeline sees it as down. The usage is read from the rate-limit headers of a
+                                 # one-token request, at most once a minute (backend/llm/claude_team_reserve.go)
 ANTHROPIC_API_KEY=sk-ant-...     # Claude API key: the overflow of the seats on claude-team (optional: without it the
                                  # worker waits for the seat reset), and the goldens (make llm-goldens LLM_CLAUDE=...)
 

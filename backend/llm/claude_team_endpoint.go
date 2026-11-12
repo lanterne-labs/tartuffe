@@ -37,8 +37,21 @@ type ClaudeTeamEndpoint struct {
 	// CallTimeout bounds one CLI process. 0 means claudeTeamCallTimeout.
 	CallTimeout time.Duration
 
+	// ReservePercent keeps the end of the last seat for the reserved tasks
+	// (the X bot's tweets): once the seat's 5 h or 7 d usage reaches this
+	// percentage, every other task leaves the seat until that window resets.
+	// 0: no reserve. See claude_team_reserve.go.
+	ReservePercent float64
+	// probe reads the usage of a seat; nil: probeSeatUsage. The tests fake it.
+	probe func(ctx context.Context, token string) (seatUsage, error)
+
 	mu    sync.Mutex
 	seats []claudeSeat // in the order of use; the tokens are never logged
+	// probed is the time of the last usage reading of the reserved seat (or
+	// of its start: one reading at a time); probeFailures counts the
+	// readings that failed in a row.
+	probed        time.Time
+	probeFailures int
 	// changed is closed (and replaced) when a process ends or a seat goes
 	// down: the calls that wait for a free process look again.
 	changed  chan struct{}
@@ -89,6 +102,22 @@ type claudeSeat struct {
 	down  time.Time // zero: the seat serves calls; else: the seat is down until this time
 	reset time.Time // the reset time to report while the seat is down; zero: not known
 	busy  int       // the processes of the seat running now
+	// held: the seat keeps what is left of its usage window for the reserved
+	// tasks until this time; the other tasks see it as down (zero: no hold).
+	held time.Time
+}
+
+// blocked returns the time until which the seat does not serve a call
+// (reserved: a call of a reserved task), zero when it serves now.
+func (s *claudeSeat) blocked(now time.Time, reserved bool) time.Time {
+	var until time.Time
+	if now.Before(s.down) {
+		until = s.down
+	}
+	if !reserved && now.Before(s.held) && s.held.After(until) {
+		until = s.held
+	}
+	return until
 }
 
 // NewClaudeTeamEndpointFromEnv builds the endpoint of the seats of
@@ -109,7 +138,14 @@ func NewClaudeTeamEndpointFromEnv() (*ClaudeTeamEndpoint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claude team endpoint: %w", err)
 	}
-	e := &ClaudeTeamEndpoint{Binary: bin, seats: seats}
+	e := &ClaudeTeamEndpoint{Binary: bin, seats: seats, ReservePercent: defaultReservePercent}
+	if v := strings.TrimSpace(os.Getenv("CLAUDE_TEAM_RESERVE_PERCENT")); v != "" {
+		pct, err := strconv.ParseFloat(v, 64)
+		if err != nil || pct < 0 || pct > 100 {
+			return nil, fmt.Errorf("CLAUDE_TEAM_RESERVE_PERCENT: %q is not a percentage (0: no reserve)", v)
+		}
+		e.ReservePercent = pct
+	}
 	if v := strings.TrimSpace(os.Getenv("CLAUDE_TEAM_PLAN_PROCS_PER_SEAT")); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
@@ -203,7 +239,11 @@ func (t *ClaudeTeamEndpoint) Call(ctx context.Context, req ChatRequest, opts Cla
 	t.mu.Lock()
 	u := countTaskCall(&t.usage, req.Task, creq.Model)
 	t.mu.Unlock()
-	text, res, err := t.callSeats(ctx, creq, system, prompt, req.wantsJSON())
+	reserved := reservedTasks[req.Task]
+	if !reserved {
+		t.checkReserve(ctx)
+	}
+	text, res, err := t.callSeats(ctx, creq, system, prompt, req.wantsJSON(), reserved)
 	t.mu.Lock()
 	u.Usage = u.Usage.Add(res.Usage)
 	u.CostUSD += res.TotalCostUSD
@@ -222,13 +262,13 @@ func (t *ClaudeTeamEndpoint) Call(ctx context.Context, req ChatRequest, opts Cla
 // the next seat. When every seat is down, the call fails with the
 // UnavailableError of the earliest reset. The result is the one of the last
 // process, zero when none ran.
-func (t *ClaudeTeamEndpoint) callSeats(ctx context.Context, creq ClaudeRequest, system, prompt string, wantJSON bool) (string, claudeCLIResult, error) {
+func (t *ClaudeTeamEndpoint) callSeats(ctx context.Context, creq ClaudeRequest, system, prompt string, wantJSON, reserved bool) (string, claudeCLIResult, error) {
 	var res claudeCLIResult
 	var last *UnavailableError // the limit error of the last seat
 	// One try per seat: a seat that fails here is down until a time after
 	// now (answer), so acquire never returns it again in this call.
 	for range t.seats {
-		seat, release, earliest, err := t.acquire(ctx)
+		seat, release, earliest, err := t.acquire(ctx, reserved)
 		if err != nil {
 			return "", res, fmt.Errorf("claude team: %w", err)
 		}
@@ -251,7 +291,7 @@ func (t *ClaudeTeamEndpoint) callSeats(ctx context.Context, creq ClaudeRequest, 
 		}
 		t.seatDown(seat.name, down, last.RetryAt, now)
 	}
-	if earliest, serving := t.serving(time.Now()); !serving {
+	if earliest, serving := t.serving(time.Now(), reserved); !serving {
 		return "", res, t.unavailable(earliest, last)
 	}
 	return "", res, last // a seat came back during the call; the next call uses it
@@ -261,33 +301,35 @@ func (t *ClaudeTeamEndpoint) callSeats(ctx context.Context, creq ClaudeRequest, 
 // process, and returns it with the release to call when the process ends.
 // While every seat that serves is full, it waits. When every seat is down,
 // release is nil and earliest is the seat that comes back first. The error is
-// the one of ctx.
-func (t *ClaudeTeamEndpoint) acquire(ctx context.Context) (seat claudeSeat, release func(), earliest claudeSeat, err error) {
+// the one of ctx. A seat held for the reserved tasks is down for the others
+// (reserved false) until its hold ends.
+func (t *ClaudeTeamEndpoint) acquire(ctx context.Context, reserved bool) (seat claudeSeat, release func(), earliest claudeSeat, err error) {
 	per := t.procsPerSeat()
 	for {
 		t.mu.Lock()
 		now := time.Now()
 		earliest = claudeSeat{}
+		allDown := true
 		for i := range t.seats {
 			s := &t.seats[i]
-			if !s.down.IsZero() && now.Before(s.down) {
-				if earliest.down.IsZero() || s.down.Before(earliest.down) {
+			if !s.down.IsZero() && !now.Before(s.down) {
+				s.down, s.reset = time.Time{}, time.Time{}
+			}
+			if until := s.blocked(now, reserved); !until.IsZero() {
+				if earliest.down.IsZero() || until.Before(earliest.down) {
 					earliest = *s
+					if !until.Equal(s.down) {
+						earliest.down, earliest.reset = until, until // the hold ends then
+					}
 				}
 				continue
 			}
-			s.down, s.reset = time.Time{}, time.Time{}
+			allDown = false
 			if s.busy < per {
 				s.busy++
 				got := *s
 				t.mu.Unlock()
 				return got, func() { t.done(i) }, claudeSeat{}, nil
-			}
-		}
-		allDown := true
-		for i := range t.seats {
-			if t.seats[i].down.IsZero() {
-				allDown = false
 			}
 		}
 		if allDown {
@@ -340,20 +382,24 @@ func (t *ClaudeTeamEndpoint) wakeLocked() {
 // the seat that comes back first.
 // Serving reports whether a seat is not at its limit.
 func (t *ClaudeTeamEndpoint) Serving() bool {
-	_, ok := t.serving(time.Now())
+	_, ok := t.serving(time.Now(), false)
 	return ok
 }
 
-func (t *ClaudeTeamEndpoint) serving(now time.Time) (earliest claudeSeat, ok bool) {
+func (t *ClaudeTeamEndpoint) serving(now time.Time, reserved bool) (earliest claudeSeat, ok bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i := range t.seats {
 		s := &t.seats[i]
-		if s.down.IsZero() || !now.Before(s.down) {
+		until := s.blocked(now, reserved)
+		if until.IsZero() {
 			return claudeSeat{}, true
 		}
-		if earliest.down.IsZero() || s.down.Before(earliest.down) {
+		if earliest.down.IsZero() || until.Before(earliest.down) {
 			earliest = *s
+			if !until.Equal(s.down) {
+				earliest.down, earliest.reset = until, until
+			}
 		}
 	}
 	return earliest, false
