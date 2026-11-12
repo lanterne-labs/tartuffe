@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"strings"
@@ -85,16 +84,11 @@ func (b *Bot) DraftVote(ctx context.Context, slot time.Time) error {
 	if err != nil {
 		return err
 	}
-	var m strings.Builder
-	fmt.Fprintf(&m, "🗳 <b>Tweet du vote de %s</b>\n%d bulletins comptés\n", at.In(b.Zone).Format("02/01 15:04"), v.Counted)
+	note := fmt.Sprintf("%d bulletins comptés", v.Counted)
 	if v.Counted >= StandingsFrom {
-		fmt.Fprintf(&m, "⚠️ Le seuil de %d bulletins est passé : les résultats peuvent être tweetés.\n", StandingsFrom)
+		note += fmt.Sprintf("\n⚠️ Le seuil de %d bulletins est passé : les résultats peuvent être tweetés.", StandingsFrom)
 	}
-	fmt.Fprintf(&m, "\n<pre>%s</pre>\n\nPour publier votre propre texte : répondez à ce message avec le tweet.", html.EscapeString(text))
-	msg, err := b.Telegram.Send(ctx, m.String(), [][]Button{{
-		{Text: "✅ Publier", Data: fmt.Sprintf("p:%d:1", id)},
-		{Text: "⏭ Passer", Data: fmt.Sprintf("s:%d", id)},
-	}})
+	msg, err := b.Telegram.Send(ctx, VoteDraftMessage(at.In(b.Zone), note, []string{text}), voteButtons(id, 1))
 	if err != nil {
 		return fmt.Errorf("send vote draft %d: %w", id, err)
 	}

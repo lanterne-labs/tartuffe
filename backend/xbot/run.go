@@ -377,7 +377,7 @@ func DraftMessage(d *Draft, at time.Time, site string) string {
 	for i, v := range d.Versions {
 		fmt.Fprintf(&b, "\n<b>%s</b> (%d car.)\n<pre>%s</pre>\n", esc(label(d, i)), Length(v), esc(v))
 	}
-	b.WriteString("\nPour d'autres versions : répondez à ce message avec votre demande (« plus drôle », « ne cite pas toute la phrase »).\nPour publier votre propre texte : répondez avec <code>=</code> suivi du tweet (les tags sont ajoutés s'il n'en a pas).")
+	b.WriteString("\n" + replyHelp)
 	return b.String()
 }
 
@@ -421,9 +421,9 @@ func (b *Bot) Handle(ctx context.Context, u Update) error {
 		_, err := b.Telegram.Send(ctx, "Ce tweet est déjà décidé ("+p.Status+") : rien n'a changé.", nil)
 		return err
 	}
-	// A reply is a request for other versions; "=" before it makes it the
-	// tweet itself. A vote tweet has no writer: its reply is the tweet.
-	own := p.ContradictionID == nil
+	// A reply is a request for other versions, of a vote tweet too; "="
+	// before it makes it the tweet itself.
+	own := false
 	if rest, ok := strings.CutPrefix(text, "="); ok {
 		own, text = true, strings.TrimSpace(rest)
 	}
@@ -454,6 +454,9 @@ func (b *Bot) revise(ctx context.Context, p *storage.XPost, request string) erro
 	}
 	if err := tell("✍️ Je réécris : les nouvelles versions arrivent dans une minute ou deux."); err != nil {
 		return err
+	}
+	if p.ContradictionID == nil {
+		return b.reviseVote(ctx, p, request, tell)
 	}
 	c, err := b.Store.GetBotContradiction(ctx, *p.ContradictionID)
 	if err != nil {
@@ -495,6 +498,47 @@ func (b *Bot) revise(ctx context.Context, p *storage.XPost, request string) erro
 	}
 	b.closeMessage(ctx, p, "🔁 Réécrit à votre demande : les nouvelles versions sont dans le message plus bas.")
 	log.Info().Int64("post", p.ID).Str("request", request).Msg("xbot: draft revised")
+	return nil
+}
+
+// reviseVote is revise for a vote draft: the writer rewrites it from what
+// may be said of the vote (ReviseVote).
+func (b *Bot) reviseVote(ctx context.Context, p *storage.XPost, request string, tell func(string) error) error {
+	if b.Vote == nil {
+		return tell("Pas de vote configuré : le brouillon reste tel quel.")
+	}
+	v, err := b.Vote(ctx, b.Now())
+	if err != nil {
+		return fmt.Errorf("revise vote post %d: %w", p.ID, err)
+	}
+	if v == nil {
+		return tell("Aucun vote n'est ouvert : le brouillon reste tel quel.")
+	}
+	versions, dropped, err := ReviseVote(ctx, b.Writer, v, b.Site, p.Variants, request)
+	if errors.Is(err, llm.ErrUnavailable) {
+		log.Warn().Err(err).Int64("post", p.ID).Msg("xbot: LLM unavailable for a revision")
+		return tell("Le modèle n'est pas disponible pour l'instant : le brouillon reste tel quel. Répondez à nouveau plus tard.")
+	}
+	if err != nil {
+		return fmt.Errorf("revise vote post %d: %w", p.ID, err)
+	}
+	if len(versions) == 0 {
+		log.Warn().Int64("post", p.ID).Strs("dropped", dropped).Msg("xbot: no revised version passed the checks")
+		return tell("Aucune nouvelle version n'a passé les contrôles ; le brouillon reste tel quel.\n<pre>" + html.EscapeString(strings.Join(dropped, "\n")) + "</pre>")
+	}
+	msg, err := b.Telegram.Send(ctx, VoteDraftMessage(p.PostAt.In(b.Zone), "Réécrit à votre demande.", versions), voteButtons(p.ID, len(versions)))
+	if err != nil {
+		return fmt.Errorf("send revised vote draft %d: %w", p.ID, err)
+	}
+	ok, err := b.Store.ReviseXPost(ctx, p.ID, versions, msg)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return b.Telegram.Edit(ctx, msg, "Ce tweet a été décidé entre-temps : ces versions sont abandonnées.", nil)
+	}
+	b.closeMessage(ctx, p, "🔁 Réécrit à votre demande : les nouvelles versions sont dans le message plus bas.")
+	log.Info().Int64("post", p.ID).Str("request", request).Msg("xbot: vote draft revised")
 	return nil
 }
 

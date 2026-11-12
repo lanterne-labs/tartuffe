@@ -279,6 +279,43 @@ func TestBotReplyAndExpiry(t *testing.T) {
 	assert.Equal(t, 2, n, "no draft during the silence")
 }
 
+// TestBotVoteRevise: a reply to a vote draft asks for other versions: the
+// writer gets the request, the draft and what may be said of the vote; the
+// new versions come with the link and buttons of their own; a version with a
+// mention is dropped; "=" before a reply makes it the tweet itself.
+func TestBotVoteRevise(t *testing.T) {
+	b, tg, poster, pool := testBot(t)
+	ctx := context.Background()
+	b.Slots = nil
+	b.VoteSlots = []Clock{{12, 0}}
+	b.Vote = func(context.Context, time.Time) (*VoteState, error) {
+		return &VoteState{Slug: "presidentielle-2027", MaxChoices: 3}, nil
+	}
+	require.NoError(t, b.Tick(ctx))
+	assert.Contains(t, tg.last("sendMessage")["text"], "Pour d'autres versions")
+	var msg int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT telegram_message_id FROM x_posts WHERE id = 1`).Scan(&msg))
+
+	w := b.Writer.(*fakeWriter)
+	w.reply = Reply{Standard: "2027 se prépare : votez, anonymement.", Satirical: "Votez, @toutlemonde !"}
+	require.NoError(t, b.Handle(ctx, Update{ReplyTo: msg, Text: "plus court"}))
+	assert.Contains(t, w.prompt, "plus court")
+	assert.Contains(t, w.prompt, "Classez jusqu'à 3 candidats", "what may be said of the vote")
+	var variants []string
+	var revised int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT variants, telegram_message_id FROM x_posts WHERE id = 1`).Scan(&variants, &revised))
+	require.Equal(t, []string{"2027 se prépare : votez, anonymement.\nhttps://tartuffe.me/election/presidentielle-2027"}, variants, "the version with a mention is dropped")
+	assert.NotEqual(t, msg, revised)
+	assert.Equal(t, "draft", postStatus(t, pool, 1))
+
+	require.NoError(t, b.Handle(ctx, Update{ReplyTo: revised, Text: "= Mon appel au vote."}))
+	assert.Equal(t, "approved", postStatus(t, pool, 1))
+	b.Now = func() time.Time { return time.Date(2026, 11, 10, 12, 0, 0, 0, b.Zone) }
+	require.NoError(t, b.Tick(ctx))
+	require.Len(t, poster.posted, 1)
+	assert.Equal(t, "Mon appel au vote.", poster.posted[0])
+}
+
 // TestBotVoteTweet: a vote slot drafts the call to vote, a tap publishes it
 // at its slot; it quotes nothing and tags nobody; without an open vote the
 // slot is left. A contradiction whose fact is the person's own tweet is
