@@ -77,7 +77,7 @@ type XAccount struct {
 
 // The categories and statuses of x_accounts.
 var (
-	XAccountCategories = []string{"party", "outlet", "journalist", "factcheck", "association", "independent", "other"}
+	XAccountCategories = []string{"party", "outlet", "journalist", "factcheck", "association", "independent", "personality", "other"}
 	XAccountStatuses   = []string{"suggested", "approved", "refused"}
 )
 
@@ -254,6 +254,19 @@ func (s *PostgresStorer) UpsertXAccount(ctx context.Context, a XAccount) (XAccou
 		return XAccount{}, fmt.Errorf("upsert x account %s: %w", a.Handle, err)
 	}
 	return pgx.CollectExactlyOneRow(rows, scanXAccount)
+}
+
+// VoteTagAccounts returns up to n approved accounts of the categories, that
+// are not the account of a tracked person or party, the least recently
+// tagged first (never tagged first, then at random).
+func (s *PostgresStorer) VoteTagAccounts(ctx context.Context, categories []string, n int) ([]XAccount, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+xAccountColumns+` FROM x_accounts
+		WHERE status = 'approved' AND category = ANY($1) AND person_id IS NULL
+		ORDER BY last_tagged_at NULLS FIRST, random() LIMIT $2`, categories, n)
+	if err != nil {
+		return nil, fmt.Errorf("vote tag accounts: %w", err)
+	}
+	return pgx.CollectRows(rows, scanXAccount)
 }
 
 // SetXAccountStatus sets the status of accounts by handle; it returns how

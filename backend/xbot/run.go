@@ -514,7 +514,7 @@ func (b *Bot) reviseVote(ctx context.Context, p *storage.XPost, request string, 
 	if v == nil {
 		return tell("Aucun vote n'est ouvert : le brouillon reste tel quel.")
 	}
-	versions, dropped, err := ReviseVote(ctx, b.Writer, v, b.Site, p.Variants, request)
+	versions, dropped, err := ReviseVote(ctx, b.Writer, v, b.Site, p.Tags, p.Variants, request)
 	if errors.Is(err, llm.ErrUnavailable) {
 		log.Warn().Err(err).Int64("post", p.ID).Msg("xbot: LLM unavailable for a revision")
 		return tell("Le modèle n'est pas disponible pour l'instant : le brouillon reste tel quel. Répondez à nouveau plus tard.")
