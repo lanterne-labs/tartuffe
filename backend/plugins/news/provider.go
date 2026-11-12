@@ -729,6 +729,8 @@ func (p *Provider) extractDocument(
 		return 0, fmt.Errorf("extracting facts from %s: %w", doc.URL, err)
 	}
 
+	facts = dropUnnamedTarget(target, doc, facts)
+
 	publishedAt := articleDate(doc, facts)
 
 	if opts.KeepSourceDir != "" {
@@ -1326,4 +1328,26 @@ func searchWindowEnd(doc core.SourceDocument) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return t, true
+}
+
+// dropUnnamedTarget removes the facts whose subject is the target person when
+// the article names them nowhere (title, text, URL): a search result about
+// someone else, whose first-person words the extractor gave to the target.
+// Facts about the other entities of the article stay.
+func dropUnnamedTarget(target plugins.Target, doc core.SourceDocument, facts []backend.Fact) []backend.Fact {
+	if target.IsParty() || len(facts) == 0 || categorizer.NamedInSource(target.Name, doc.URL, doc.Title, doc.Content) {
+		return facts
+	}
+	want := util.NormalizePersonName(target.Name)
+	kept := facts[:0:0]
+	for _, f := range facts {
+		if util.NormalizePersonName(f.SubjectEntity) == want {
+			log.Warn().Str("url", doc.URL).Str("target", target.Name).Str("fact", util.TruncateString(f.NormalizedFactText, 160)).
+				Msg("news: fact dropped: the article never names the target")
+			metrics.IncrementNewsArticles("target_not_named")
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept
 }

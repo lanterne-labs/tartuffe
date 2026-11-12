@@ -281,3 +281,32 @@ func abs(n int) int {
 	}
 	return n
 }
+
+// NamedInSource reports whether a source names the person: the last word of
+// the name (the family name: "aignan" of "Nicolas Dupont-Aignan", "pen" of
+// "Marine Le Pen") is a word of one of the texts, or part of the URL (a
+// person's own site, francoisruffin.fr, names them in one word). The news
+// plugin drops the facts it would give a target whom the article never names:
+// the words are then someone else's (an interview of Philippe Juvin stored as
+// Nicolas Dupont-Aignan's, an Instagram post of another politician, 2026-11-12).
+func NamedInSource(name, url string, texts ...string) bool {
+	tokens := nameTokens(name)
+	if len(tokens) == 0 {
+		return true
+	}
+	family := tokens[len(tokens)-1].key
+	if family == "" {
+		return true
+	}
+	for _, text := range texts {
+		for _, t := range nameTokens(text) {
+			if t.key == family {
+				return true
+			}
+		}
+	}
+	if len(family) >= 5 && strings.Contains(util.RemoveAccents(strings.ToLower(url)), family) {
+		return true
+	}
+	return false
+}

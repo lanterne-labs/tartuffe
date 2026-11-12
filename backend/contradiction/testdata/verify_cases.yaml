@@ -1281,3 +1281,26 @@ cases:
     notes: "January 2026, at her appeal trial: she was already convicted in first instance (the ruling 'upheld' it). Prod 1626."
     date_a: "2026-07-07"
     date_b: "2026-01-12"
+
+  # ---- A pledge still honoured whose wording the person regrets is not walked back.
+  - name: "FP_2429_ruffin_pledge_kept_wording_regretted"
+    fact_a: "François Ruffin a déclaré qu'il se paie au smic depuis son arrivée à l'Assemblée pour montrer qu'il ne se présentait pas pour l'argent, comme le disaient les gens chez lui en 2017."
+    fact_b: "François Ruffin a déclaré à Marianne qu'il aurait dû dire salaire médian ou salaire moyen plutôt que SMIC, tout en affirmant tenir son engagement."
+    claimed_reason: "Il affirmait se payer au smic, puis admet qu'il aurait dû parler de salaire médian ou moyen : il désavoue sa propre formule."
+    expect: drop
+    bucket: same_direction
+    notes: "« Je me suis engagé, donc je le fais. Mais bon, franchement, j'aurais dû dire salaire médian ou salaire moyen… » : the pledge holds. Prod 2429 (2026-11-12)."
+    date_a: "2026-02-14"
+    date_b: "2026-03-08"
+
+  # ---- A measure refused in one form (a VAT cut) and asked in another (a surcharge
+  # ---- suspended) is one line, not a reversal of an earlier call to cut the surcharges.
+  - name: "FP_2426_lisnard_surcharge_not_vat"
+    fact_a: "David Lisnard a soutenu une baisse « flash » des surtaxes sur le carburant, y compris ciblée sur des secteurs économiques exposés, plutôt qu'un prêt de l'État pour payer les taxes."
+    fact_b: "David Lisnard estime qu'il ne faut pas baisser la TVA sur les carburants, ce qui ferait payer une partie du plein par les enfants et petits-enfants, et demande de suspendre provisoirement les certificats d'économie d'énergie, soit 17 centimes par litre."
+    claimed_reason: "Il a soutenu en avril une baisse « flash » des surtaxes sur les carburants, puis estime en mai qu'il ne faut pas baisser les taxes sur les carburants."
+    expect: drop
+    bucket: same_direction
+    notes: "The article (franceinfo, 6 May 2026) has him ask to suspend the CEE surcharge in the same interview; fact_b here carries what the stored fact left out. Prod 2426 (2026-11-12)."
+    date_a: "2026-04-06"
+    date_b: "2026-05-06"

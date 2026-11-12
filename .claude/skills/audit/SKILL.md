@@ -111,9 +111,66 @@ source, the new entities, and the known failure gauges (Google redirect URLs,
 tweets on a profile URL, undated news, sentinel dates, documents without text,
 same-quote duplicates, fan-out, stance sizes, API spend). Compare with the last
 audit's numbers in bd (`bd memories audit-last-run`): a gauge going up is a
-regression to explain before anything else. Also check the worker:
-`host logs --service worker -n 300` for errors, seats at their limit, the
-last maintenance pass.
+regression to explain before anything else. Then read the worker's errors
+and the X bot (the two sections below): they are part of every run.
+
+### The worker's errors
+
+```bash
+.claude/skills/audit/scripts/worker_errors.sh <worker service id> <audit folder>/logs
+```
+
+It reads the warnings and errors of every deployment of the window, without
+the seat-limit lines (`LLM unavailable`: every seat at its limit logs about
+2 000 lines in 3 minutes, and `host logs -n 300` then shows nothing else),
+and groups them by message. Read every group; for each one decide: expected
+(the worker waits for a seat reset, a site answers 403 and the fallback reads
+it), or a bug. A bug is fixed in step 4 with a test, like a data bug. Known
+readings:
+
+- `Rolled back fact after failure during ingestion` in the minutes a seat
+  reaches its limit: the facts in flight; their documents are tried again.
+- `claude request rejected … credit balance`: the API key is empty; the
+  endpoint halts (expected since PR 75). Any OTHER rejected request is a bug.
+- `Stripped trailing text from LLM JSON response` /
+  `LLM corrected its JSON response`: the model wrote after its JSON. Read the
+  `trailing_text`: when it holds a corrected answer the parser must keep the
+  last one (fixed for the facts on 2026-11-12: a fact was lost with its
+  withdrawn first answer).
+- `Skipping fact: canonical_verb … outside the closed enum`, `Skipping invalid
+  fact`: a fact lost; more than a few per day is a prompt or parser bug.
+- `Failover extractor: all … extractors failed`: per site; compare with the
+  dashboard **Sources**.
+- `Embeddings request failed` beyond attempt 3: facts lost.
+- An error that is none of these: read the lines around it in
+  `logs/worker_errors.log` and find its cause before the samples.
+
+### The X bot
+
+The same script writes `logs/xbot.log`. Read it with the bot's table:
+
+```sql
+select id, kind, status, contradiction_id, slot, created_at, decided_at, posted_at, tweet_id, error, variants from x_posts where created_at >= :since order by id;
+```
+
+- every slot of the window (`XBOT_SLOTS`, `XBOT_VOTE_SLOTS`) has a row, or a
+  reason: the silence, no candidate left, the LLM down until after the slot
+  (`the draft is tried again every tick until its slot`);
+- `reading Telegram failed … Conflict: terminated by other getUpdates
+  request`: another process reads the same bot (a local `dm worker run` or
+  `dm bot` with the production token, a second worker). The taps on the drafts
+  are lost while it lasts: find the other reader and stop it. The bot sends a
+  Telegram alert after 5 minutes of it (since 2026-11-12; on 2026-11-11 it
+  lasted 4 h 30 and the day's draft expired undecided);
+- a row `expired`: nobody decided. Say so in the report; it is the owner's
+  call, not a bug, unless the Conflict above was running;
+- a row with an `error`, or `approved` and not posted an hour after its slot:
+  a bug (the X API answer is in `error`);
+- read the variants of each draft as a tweet the site signs: a « quote » must
+  be in the source quotes word for word, the dates at their precision, no
+  insult, and the contradiction behind it must be one you would review real.
+  A draft on a contradiction you find false is a finding of step 2: review it
+  false, and it leaves the bot's picks.
 
 ### The extraction: did the pipeline work at all?
 
@@ -202,6 +259,24 @@ when the window is empty), and tag every row with where it came from:
 
 Report each sample as an error rate by type. A type above about 3 % is a
 pattern to fix in step 4; below, note it.
+
+### One bad row means a search of the whole database
+
+A bad fact or a false contradiction found in a sample or a review is one
+instance of a pattern. Before step 4, look for the same pattern over every
+row, not only the sample (the user, 2026-11-12: "anything you find not good
+on a contradiction or a fact you fix it for the whole db"): write the query
+that would have found the row, run it over the candidates (over everyone
+when it is cheap), read what it returns, and put every row it confirms in the
+cleanup of step 5. Keep the query when it will serve again
+(`scripts/sweep_unnamed.sql`: the candidates' news facts whose article never
+names them). Queries that paid off: an article that never names the person
+(misattribution); a source on a social network read through the news search
+(`instagram.com`, `facebook.com`: the page does not say whose post it is);
+an agenda line stored as a position (« sera l'invité de », « a donné
+rendez-vous sur »); HTML entities left in a quote (`&#xE9;`); a fact text
+that dates a past event after its source (`published_at` of a live page is
+the day the page was created).
 
 ## 4. Fix — the part that makes the next audit shorter
 
