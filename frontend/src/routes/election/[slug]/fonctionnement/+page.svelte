@@ -126,7 +126,7 @@
 		margin: 1.5rem 0 2rem;
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.9rem, 6vw, 2.8rem);
 		font-weight: 600;
 		line-height: 1.08;

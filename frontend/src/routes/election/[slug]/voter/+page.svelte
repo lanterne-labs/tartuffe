@@ -1047,7 +1047,7 @@
 		display: grid;
 		place-items: center;
 		background: var(--bg-secondary);
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.4rem;
 		color: var(--text-secondary);
 	}
@@ -1086,7 +1086,7 @@
 		object-fit: cover;
 	}
 	.slot-initial {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.9rem;
 		font-weight: 600;
 		color: var(--text-secondary);
@@ -1459,7 +1459,7 @@
 		margin: 1rem auto 1.5rem;
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(2.25rem, 6vw, 3.5rem);
 		font-weight: 600;
 		margin: 0.25rem 0 0.75rem;
@@ -1612,7 +1612,7 @@
 		text-align: center;
 	}
 	.ballot h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.5rem;
 		margin: 0;
 	}

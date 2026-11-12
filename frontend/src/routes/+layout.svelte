@@ -1,11 +1,9 @@
 <script lang="ts">
 	// The fonts are served by the site itself: no request leaves for a font
 	// host (privacy: Google Fonts would see every visitor's address).
-	import '@fontsource/inter/400.css';
+	import '@fontsource-variable/schibsted-grotesk';
+	import '@fontsource-variable/big-shoulders';
 	import { LAB_URL, LAB_DOMAIN } from '$lib/contact';
-	import '@fontsource/inter/500.css';
-	import '@fontsource/inter/600.css';
-	import '@fontsource/inter/700.css';
 	import '@fontsource/cormorant-garamond/500.css';
 	import '@fontsource/cormorant-garamond/600.css';
 	import '@fontsource/cormorant-garamond/700.css';
@@ -16,7 +14,7 @@
 	import { lang, tr } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { API_BASE } from '$lib/config';
-	import { session, signOut, refreshUser } from '$lib/auth';
+	import { session, signOut, refreshUser, signInOpen } from '$lib/auth';
 	import SignInDialog from '$lib/components/SignInDialog.svelte';
 	import EventBanner from '$lib/components/EventBanner.svelte';
 	import SiteNav from '$lib/components/SiteNav.svelte';
@@ -82,7 +80,7 @@
 	<meta name="twitter:description" content={meta.description} />
 </svelte:head>
 
-<SiteNav lang={currentLang} pathname={$page.url.pathname} {featured} {userName} showProfile={!!$voteKey} onsignout={signOut} />
+<SiteNav lang={currentLang} pathname={$page.url.pathname} {featured} {userName} showProfile={!!$voteKey} onsignout={signOut} onsignin={() => signInOpen.set(true)} />
 
 <SignInDialog />
 {#if featured}

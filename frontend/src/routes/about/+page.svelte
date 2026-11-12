@@ -382,7 +382,7 @@
 		color: var(--accent-hover);
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(2rem, 6.5vw, 3.1rem);
 		font-weight: 600;
 		line-height: 1.08;
@@ -419,7 +419,7 @@
 		margin-bottom: 3.5rem;
 	}
 	h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.6rem, 4.5vw, 2.1rem);
 		font-weight: 600;
 		line-height: 1.15;
@@ -427,7 +427,7 @@
 		text-wrap: balance;
 	}
 	h3 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.3rem;
 		font-weight: 600;
 		margin: 0 0 0.5rem;
@@ -486,7 +486,7 @@
 		color: var(--text-muted);
 	}
 	.formula {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-variant-numeric: lining-nums;
 		font-size: clamp(1rem, 3.4vw, 1.3rem);
 		color: var(--text-primary);
@@ -530,7 +530,7 @@
 		gap: 0.5rem;
 	}
 	dt {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-weight: 700;
 		font-size: 1.1rem;
 		color: var(--accent-hover);
@@ -571,7 +571,7 @@
 		font-size: 0.9rem;
 	}
 	.rule-n {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-variant-numeric: lining-nums;
 		font-size: 1.5rem;
 		font-weight: 600;

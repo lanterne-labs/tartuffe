@@ -21,6 +21,10 @@
 	import HintSheet from '$lib/components/HintSheet.svelte';
 	import { authFetch, session } from '$lib/auth';
 	import type { FeedItem, FeedPage, PersonSummary } from '$lib/types';
+	import ClashCard from '$lib/components/ClashCard.svelte';
+	import { loadCandidates, loadStreaks, type Streak } from '$lib/streaks';
+	import { signInOpen } from '$lib/auth';
+	import { displayName, clip } from '$lib/share';
 
 	// What the feed lists: the contradictions (the default, no `kind` in the
 	// URL), the facts, or both together (`kind=all`).
@@ -210,8 +214,47 @@
 	}
 
 
+	// Beside the list, as on a social network: the candidates to filter by,
+	// their days without a contradiction, and the contradiction the users
+	// backed the most this week (one of the week drawn at random while none
+	// has a +1).
+	let candidates: PersonSummary[] = $state([]);
+	let streaks: Streak[] = $state([]);
+	let pick = $state<{ item: FeedItem; backed: boolean } | null>(null);
+	async function loadSide() {
+		try {
+			candidates = await loadCandidates();
+			streaks = await loadStreaks(candidates, currentLang);
+		} catch (err) {
+			console.error('failed to load the candidates of the feed', err);
+		}
+		try {
+			const res = await fetch(`${API_BASE}/api/feed?sort=hot&kind=contradiction&limit=30`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const week = ((await res.json()) as FeedPage).items.filter((it) => it.other && Date.now() - new Date(it.at).getTime() < 7 * 86_400_000);
+			const top = week.reduce<FeedItem | null>((best, it) => (it.likes > (best?.likes ?? 0) ? it : best), null);
+			if (top) pick = { item: top, backed: true };
+			else if (week.length > 0) pick = { item: week[Math.floor(Math.random() * week.length)], backed: false };
+		} catch (err) {
+			console.error('failed to load the contradiction of the week', err);
+		}
+	}
+
+	// The day of an item, as the separators of the newest-first list say it.
+	function dayLabel(iso: string): string {
+		const d = new Date(iso);
+		const days = Math.round((new Date(new Date().toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86_400_000);
+		if (days <= 1) {
+			const t = new Intl.RelativeTimeFormat(currentLang === 'en' ? 'en' : 'fr', { numeric: 'auto' }).format(-days, 'day');
+			return t.charAt(0).toUpperCase() + t.slice(1);
+		}
+		const t = d.toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+		return t.charAt(0).toUpperCase() + t.slice(1);
+	}
+
 	let unsub: (() => void) | null = null;
 	onMount(() => {
+		loadSide();
 		realtimeManager.connect();
 		unsub = subscribeToPersonEvents(-1, (e) => {
 			if (e.type === 'contradiction_added' && filter !== 'fact' && (!personFilter || e.personId === personFilter)) fresh++;
@@ -227,13 +270,17 @@
 	<title>{tr('feed.title', currentLang)} — tartuffe.me</title>
 </svelte:head>
 
+<div class="feed-grid">
 <div class="feed">
 	<header class="feed-head">
-		<h1>{tr('feed.title', currentLang)}</h1>
+		<div>
+			<h1><span class="live-dot"></span>{tr('feed.title', currentLang)}</h1>
+			<p class="feed-sub">{tr('feed.sub', currentLang)}</p>
+		</div>
 		<div class="head-right">
-		<div class="sorts" role="tablist">
+		<div class="tabs" role="tablist">
 			{#each ['hot', 'new'] as s (s)}
-				<button role="tab" class="sort" class:active={sort === s} aria-selected={sort === s} onclick={() => setParams({ sort: s === 'new' ? 'new' : '' })}>
+				<button role="tab" class:on={sort === s} aria-selected={sort === s} onclick={() => setParams({ sort: s === 'new' ? 'new' : '' })}>
 					{tr(`feed.sort.${s}`, currentLang)}
 				</button>
 			{/each}
@@ -254,9 +301,24 @@
 	</header>
 
 	<!-- What the feed lists, always in view: the contradictions first. -->
-	<div class="kinds" role="tablist" aria-label={tr('feed.kinds', currentLang)}>
+	{#if candidates.length > 0}
+		<div class="people" role="group" aria-label={tr('feed.filter.person', currentLang)}>
+			<button class:on={!personFilter} onclick={() => setParams({ person: '' })}>
+				<span class="ini all"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /></svg></span>
+				{tr('home.filter.all', currentLang)}
+			</button>
+			{#each candidates as p (p.id)}
+				<button class:on={personFilter === p.id} onclick={() => setParams({ person: personFilter === p.id ? '' : String(p.id) })} title={displayName(p.name)}>
+					{#if p.image_url}<img src={p.image_url} alt="" loading="lazy" />{:else}<span class="ini">{p.name.charAt(0).toUpperCase()}</span>{/if}
+					{displayName(p.name).split(' ').slice(-1)[0]}
+				</button>
+			{/each}
+		</div>
+	{/if}
+
+	<div class="kinds tabs" role="tablist" aria-label={tr('feed.kinds', currentLang)}>
 		{#each [['contradiction', 'feed.contradictions'], ['fact', 'feed.facts'], ['all', 'feed.all']] as [f, key] (f)}
-			<button role="tab" class="kind-tab" class:active={filter === f} aria-selected={filter === f} onclick={() => setFilter(f as Filter)}>
+			<button role="tab" class:on={filter === f} aria-selected={filter === f} onclick={() => setFilter(f as Filter)}>
 				{tr(key, currentLang)}
 			</button>
 		{/each}
@@ -329,6 +391,12 @@
 		{#each items as it, i (it.kind + it.id)}
 			{@const topic = pickLang(it.stance_label, it.stance_label_en, currentLang)}
 			{@const link = sharePath(it.kind, it.id, it.person.slug)}
+			{#if sort === 'new' && (i === 0 || dayLabel(it.at) !== dayLabel(items[i - 1].at))}
+				<li class="day-sep">{dayLabel(it.at)}</li>
+			{/if}
+			{#if it.kind === 'contradiction' && it.other}
+			<li class="clash-li"><ClashCard bind:item={items[i]} lang={currentLang} /></li>
+			{:else}
 			<li class="item item--{it.kind}" class:is-contradiction={it.kind === 'contradiction'}>
 				<span class="kind kind--{it.kind}">
 					<span class="kind-mark" aria-hidden="true">{it.kind === 'contradiction' ? '⟷' : '●'}</span>
@@ -410,6 +478,7 @@
 					</div>
 				</div>
 			</li>
+			{/if}
 		{/each}
 	</ol>
 
@@ -435,6 +504,43 @@
 		{/if}
 	{/if}
 </div>
+<aside class="side" aria-label={tr('feed.side', currentLang)}>
+	{#if streaks.length > 0}
+		<div class="side-card">
+			<h2>{tr('streak.title', currentLang)}</h2>
+			<ul class="streaks">
+				{#each streaks.slice(0, 6) as s (s.person.id)}
+					<li>
+						<a href={personPath(s.person.slug)}>
+							{#if s.person.image_url}<img src={s.person.image_url} alt="" loading="lazy" />{:else}<span class="ini">{s.person.name.charAt(0).toUpperCase()}</span>{/if}
+							<span class="streak-name">{displayName(s.person.name)}</span>
+							{#if s.since}
+								<span class="streak-since">{s.since}</span>
+							{:else}
+								<span class="streak-days" class:fresh-day={s.days < 1}>{s.days}<small> {tr('streak.unit', currentLang)}</small></span>
+							{/if}
+						</a>
+					</li>
+				{/each}
+			</ul>
+			<a class="side-link" href="/dashboard#streaks">{tr('streak.all', currentLang)}</a>
+		</div>
+	{/if}
+	{#if pick}
+		<a class="side-card side-pick" href={sharePath('contradiction', pick.item.id, pick.item.person.slug)}>
+			<h2>{tr(pick.backed ? 'feed.side.backed' : 'feed.side.pick', currentLang)}</h2>
+			<p class="pick-text">{clip(whyOf(pick.item, currentLang) || pickLang(pick.item.fact.text, pick.item.fact.text_en, currentLang), 220)}</p>
+			<p class="pick-who">{displayName(pick.item.person.name)}{#if pick.backed} · {pick.item.likes} +1{/if}</p>
+		</a>
+	{/if}
+	{#if !$session}
+		<div class="side-card side-signin">
+			<p>{tr('feed.side.signin', currentLang)}</p>
+			<button class="pill-btn pill-btn--ghost pill-btn--sm" onclick={() => signInOpen.set(true)}>{tr('auth.title', currentLang)}</button>
+		</div>
+	{/if}
+</aside>
+</div>
 
 <style>
 	.feed {
@@ -450,9 +556,6 @@
 		margin-bottom: 0.75rem;
 	}
 	h1 {
-		font-family: var(--font-serif);
-		font-size: 2rem;
-		font-weight: 600;
 		margin: 0;
 	}
 	.head-right {
@@ -950,6 +1053,260 @@
 	@media (prefers-reduced-motion: reduce) {
 		.sk {
 			animation: none;
+		}
+	}
+	/* ---------- The layout of a social feed: a column beside the list ---------- */
+	.feed-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 44rem) 19rem;
+		justify-content: center;
+		gap: 2rem;
+		align-items: start;
+		text-align: left;
+	}
+	.feed {
+		max-width: none;
+		width: 100%;
+		margin: 0;
+	}
+	.feed-head {
+		align-items: flex-end;
+	}
+	.feed-head h1 {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+		font-size: clamp(2.2rem, 5vw, 3.4rem);
+		font-weight: 800;
+		letter-spacing: -0.04em;
+		line-height: 1;
+		text-align: left;
+	}
+	.feed-sub {
+		margin-top: 0.5rem;
+		color: var(--text-secondary);
+	}
+	.kinds.tabs {
+		display: inline-flex;
+		margin: 0 0 1rem;
+		border-bottom: 1px solid var(--border-card);
+	}
+	/* The candidates, a row of portraits: a tap filters the feed. */
+	.people {
+		display: flex;
+		gap: 0.9rem;
+		margin: 0 0 1.1rem;
+		padding: 0.3rem 0.1rem 0.5rem;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.people::-webkit-scrollbar {
+		display: none;
+	}
+	.people button {
+		flex-shrink: 0;
+		display: grid;
+		justify-items: center;
+		gap: 0.35rem;
+		width: 3.6rem;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--text-muted);
+		cursor: pointer;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.people img,
+	.people .ini {
+		width: 3rem;
+		height: 3rem;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 2px solid transparent;
+		outline: 1px solid var(--border-card-hover);
+		transition: transform 0.2s var(--ease), border-color 0.2s;
+	}
+	.ini {
+		display: grid;
+		place-items: center;
+		background: var(--bg-elevated);
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+	.ini.all svg {
+		width: 1.2rem;
+		height: 1.2rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.8;
+		stroke-linecap: round;
+	}
+	.people button:hover img,
+	.people button:hover .ini {
+		transform: scale(1.06);
+	}
+	.people button.on {
+		color: var(--text-primary);
+	}
+	.people button.on img,
+	.people button.on .ini {
+		border-color: var(--bg-primary);
+		outline: 2px solid var(--accent);
+	}
+	.items {
+		gap: 0.9rem;
+	}
+	.clash-li {
+		list-style: none;
+	}
+	.day-sep {
+		list-style: none;
+		margin-top: 0.6rem;
+		font-size: 0.8rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+	/* A fact of the feed: a card that wakes under the pointer, as a contradiction. */
+	.item {
+		border-left: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+		transition: border-color 0.2s, transform 0.25s var(--ease), background 0.2s;
+	}
+	@media (hover: hover) {
+		.item:hover {
+			border-color: var(--border-card-hover);
+			background: var(--bg-card-hover);
+			transform: translateY(-2px);
+		}
+	}
+	/* ---------- The column ---------- */
+	.side {
+		position: sticky;
+		top: 5.5rem;
+		display: grid;
+		gap: 1rem;
+	}
+	.side-card {
+		display: grid;
+		gap: 0.6rem;
+		padding: 1.2rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--border-card);
+		background: var(--bg-card);
+		box-shadow: var(--shadow-card);
+		color: var(--text-primary);
+	}
+	.side-card h2 {
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: -0.02em;
+		text-align: left;
+	}
+	.streaks {
+		display: grid;
+		gap: 0.1rem;
+		list-style: none;
+	}
+	.streaks a {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		padding: 0.4rem 0.3rem;
+		border-radius: 0.6rem;
+		color: var(--text-primary);
+	}
+	.streaks a:hover {
+		background: rgba(255, 255, 255, 0.05);
+	}
+	.streaks img,
+	.streaks .ini {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+		font-size: 0.75rem;
+	}
+	.streak-name {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.9rem;
+		font-weight: 600;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.streak-days {
+		font-family: var(--font-num);
+		font-weight: 800;
+		font-size: 1.5rem;
+		line-height: 1;
+		color: var(--gold);
+	}
+	.streak-days.fresh-day {
+		color: var(--accent-hover);
+	}
+	.streak-days small {
+		font-family: var(--font-family);
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--text-muted);
+	}
+	.streak-since {
+		font-size: 0.78rem;
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+	.side-link {
+		justify-self: start;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		border-bottom: 1px solid var(--border-card-hover);
+	}
+	.side-link:hover {
+		color: var(--text-primary);
+	}
+	.side-pick {
+		transition: border-color 0.2s, transform 0.25s var(--ease);
+	}
+	.side-pick:hover {
+		border-color: rgba(229, 56, 79, 0.3);
+		transform: translateY(-2px);
+		color: var(--text-primary);
+	}
+	.pick-text {
+		font-size: 0.95rem;
+		line-height: 1.45;
+	}
+	.pick-who {
+		font-size: 0.82rem;
+		color: var(--text-muted);
+	}
+	.side-signin {
+		border-style: dashed;
+		border-color: var(--border-card-hover);
+		background: none;
+		box-shadow: none;
+		justify-items: start;
+	}
+	.side-signin p {
+		font-size: 0.9rem;
+		color: var(--text-secondary);
+	}
+	@media (max-width: 1000px) {
+		.feed-grid {
+			grid-template-columns: minmax(0, 44rem);
+		}
+		.side {
+			display: none;
 		}
 	}
 </style>

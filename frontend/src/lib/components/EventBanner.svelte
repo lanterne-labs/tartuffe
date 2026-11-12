@@ -97,7 +97,7 @@
 		min-width: 0;
 	}
 	strong {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.25rem;
 		line-height: 1.15;
 	}

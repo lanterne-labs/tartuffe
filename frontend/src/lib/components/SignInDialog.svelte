@@ -8,6 +8,7 @@
 	import { signInWithGoogle, GoogleClosed } from '$lib/google';
 	import { lang, tr } from '$lib/i18n';
 	import { CONTACT_EMAIL, mailto } from '$lib/contact';
+	import BrandMark from './BrandMark.svelte';
 	import type { AuthProvider } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -108,9 +109,13 @@
 
 <dialog bind:this={dialog} class="signin" onclose={close} onclick={onBackdrop} aria-labelledby="signin-title">
 	<header>
-		<h2 id="signin-title">{tr('auth.title', currentLang)}</h2>
+		<BrandMark size="nav" />
 		<button class="close" onclick={close} aria-label={tr('auth.close', currentLang)}>×</button>
 	</header>
+	<h2 id="signin-title">{tr('auth.title', currentLang)}</h2>
+	{#if !naming}
+		<p class="intro">{tr('auth.intro', currentLang)}</p>
+	{/if}
 
 	{#if naming}
 		<section class="provider">
@@ -143,7 +148,12 @@
 						>
 						{tr('auth.google.button', currentLang)}
 					</button>
-					<p class="muted small">{tr('auth.google.private', currentLang)} <a href="/about/privacy" onclick={close}>{tr('auth.privacy_link', currentLang)}</a></p>
+					<ul class="points">
+						{#each ['like', 'report', 'google', 'pseudo'] as k (k)}
+							<li><span aria-hidden="true">✓</span>{tr(`auth.point.${k}`, currentLang)}</li>
+						{/each}
+					</ul>
+					<a class="detail" href="/about/privacy" onclick={close}>{tr('auth.detail', currentLang)}</a>
 				</section>
 			{:else if p.name === 'noop'}
 				<section class="provider">
@@ -228,7 +238,7 @@
 		margin-bottom: 0.75rem;
 	}
 	h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.5rem;
 		font-weight: 600;
 		margin: 0;
@@ -310,5 +320,62 @@
 		color: var(--red);
 		font-size: 0.85rem;
 		margin: 0.75rem 0 0;
+	}
+	/* The new look of the dialog: the mask, what an account is for, what
+	   Google does not send. */
+	.signin {
+		border-radius: 1.5rem;
+		border: 1px solid var(--border-card-hover);
+		background: var(--bg-secondary);
+		box-shadow: 0 40px 80px -20px rgba(0, 0, 0, 0.8);
+	}
+	.signin header {
+		align-items: flex-start;
+	}
+	.signin h2 {
+		font-family: var(--font-family);
+		font-size: 1.8rem;
+		font-weight: 760;
+		letter-spacing: -0.035em;
+		line-height: 1.1;
+	}
+	.intro {
+		margin: 0.5rem 0 1.1rem;
+		font-size: 0.95rem;
+		line-height: 1.55;
+		color: var(--text-secondary);
+	}
+	.google {
+		width: 100%;
+		min-height: 3rem;
+		border-radius: var(--radius-full);
+		font-weight: 650;
+	}
+	.points {
+		display: grid;
+		gap: 0.45rem;
+		margin: 1rem 0 0.8rem;
+		padding: 1rem;
+		list-style: none;
+		border-radius: 1rem;
+		background: rgba(255, 255, 255, 0.03);
+		font-size: 0.88rem;
+		color: var(--text-secondary);
+	}
+	.points li {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.points span {
+		color: var(--green);
+	}
+	.detail {
+		display: block;
+		text-align: center;
+		font-size: 0.84rem;
+		color: var(--text-muted);
+	}
+	.detail:hover {
+		color: var(--text-primary);
 	}
 </style>

@@ -8,6 +8,8 @@
 	import { API_BASE } from '$lib/config';
 	import { personPath } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
+	import { loadStreaks, type Streak } from '$lib/streaks';
+	import { displayName } from '$lib/share';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => {
@@ -32,6 +34,38 @@
 	let othersHasMore = $state(true);
 	const OTHERS_PAGE = 24;
 	let entityFilter: '' | 'party' | 'human' = $state('');
+	// Who the page lists: the candidates (the podium, the counters, the
+	// comparison, their cards), every other politician, or the parties.
+	type Who = 'candidates' | 'all' | 'party';
+	let who = $state<Who>('candidates');
+	function setWho(w: Who) {
+		who = w;
+		setFilter(w === 'party' ? 'party' : w === 'all' ? 'human' : '');
+	}
+	// The days without a contradiction of each candidate, the longest first.
+	let streaks: Streak[] = $state([]);
+	let streaksFor = '';
+	$effect(() => {
+		const key = candidates.map((p) => p.id).join(',') + currentLang;
+		if (candidates.length === 0 || key === streaksFor) return;
+		streaksFor = key;
+		loadStreaks(candidates, currentLang)
+			.then((v) => (streaks = v))
+			.catch((err) => console.error('failed to load the days without a contradiction', err));
+	});
+	// The candidates' cards in the order of the score (as the API gives
+	// them) or of the days without a contradiction, the longest first; a
+	// candidate without a contradiction has no counter and comes last.
+	let order = $state<'score' | 'streak'>('score');
+	let streakOf = $derived(new Map(streaks.map((s) => [s.person.id, s])));
+	let shown = $derived(
+		order === 'score'
+			? persons
+			: [...persons].sort((a, b) => (streakOf.get(b.id)?.days ?? -1) - (streakOf.get(a.id)?.days ?? -1))
+	);
+	function lastDate(iso: string): string {
+		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+	}
 	let searchQuery = $state('');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -139,6 +173,8 @@
 	let unsubscribe: (() => void) | null = null;
 
 	onMount(() => {
+		// The feed's "all the counters" link opens the cards by counter.
+		if (location.hash === '#streaks') order = 'streak';
 		loadPersons();
 		loadOthers();
 		loadPanels();
@@ -163,7 +199,32 @@
 </svelte:head>
 
 <div class="dashboard">
-	<div class="podium-wrap"><Podium bind:this={podium} lang={currentLang} /></div>
+	<header class="rank-head">
+		<div>
+			<h1>{tr('rank.title', currentLang)}</h1>
+			<p>{tr('rank.sub', currentLang)}</p>
+		</div>
+		<div class="tools">
+			<div class="tabs" role="tablist">
+				{#each [['candidates', 'rank.tab.candidates'], ['all', 'rank.tab.all'], ['party', 'rank.tab.parties']] as [w, key] (w)}
+					<button role="tab" class:on={who === w} aria-selected={who === w} onclick={() => setWho(w as Who)}>{tr(key, currentLang)}</button>
+				{/each}
+			</div>
+			<div class="search-wrapper">
+				<svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<circle cx="11" cy="11" r="8"></circle>
+					<path d="m21 21-4.35-4.35"></path>
+				</svg>
+				<input
+					type="text"
+					placeholder={tr('home.search_placeholder', currentLang)}
+					value={searchQuery}
+					oninput={handleSearchInput}
+					class="search-input"
+				/>
+			</div>
+		</div>
+	</header>
 
 	{#if error}
 		<div class="error-banner">
@@ -172,43 +233,8 @@
 		</div>
 	{/if}
 
-	<div class="controls">
-		<div class="search-wrapper">
-			<svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="11" cy="11" r="8"></circle>
-				<path d="m21 21-4.35-4.35"></path>
-			</svg>
-			<input
-				type="text"
-				placeholder={tr('home.search_placeholder', currentLang)}
-				value={searchQuery}
-				oninput={handleSearchInput}
-				class="search-input"
-			/>
-		</div>
-
-		<div class="filter-pills" role="group" aria-label="Filter by entity type">
-			<button
-				class="pill"
-				class:active={entityFilter === ''}
-				onclick={() => setFilter('')}
-				aria-pressed={entityFilter === ''}
-			>{tr('home.filter.all', currentLang)}</button>
-			<button
-				class="pill"
-				class:active={entityFilter === 'human'}
-				onclick={() => setFilter('human')}
-				aria-pressed={entityFilter === 'human'}
-			>{tr('home.filter.people', currentLang)}</button>
-			<button
-				class="pill"
-				class:active={entityFilter === 'party'}
-				onclick={() => setFilter('party')}
-				aria-pressed={entityFilter === 'party'}
-			>{tr('home.filter.parties', currentLang)}</button>
-		</div>
-	</div>
-
+	{#if who === 'candidates'}
+	<div class="podium-wrap"><Podium bind:this={podium} lang={currentLang} /></div>
 
 	{#if candidates.length > 1}
 		<section class="lineup-section">
@@ -217,9 +243,13 @@
 		</section>
 	{/if}
 
-	<header class="section-header">
+	<header class="section-header" id="streaks">
 		<h2 class="section-title">{tr('home.candidates', currentLang)}</h2>
 		<p class="section-sub">{tr('home.candidates_sub', currentLang)}</p>
+		<div class="tabs order" role="tablist">
+			<button role="tab" class:on={order === 'score'} aria-selected={order === 'score'} onclick={() => (order = 'score')}>{tr('rank.order.score', currentLang)}</button>
+			<button role="tab" class:on={order === 'streak'} aria-selected={order === 'streak'} onclick={() => (order = 'streak')}>{tr('streak.title', currentLang)}</button>
+		</div>
 	</header>
 
 	{#if loading && persons.length === 0}
@@ -239,7 +269,8 @@
 		</div>
 	{:else}
 		<div class="persons-grid">
-			{#each persons as person (person.id)}
+			{#each shown as person (person.id)}
+				{@const st = streakOf.get(person.id)}
 				<a href={personPath(person.slug)} class="card">
 					<div class="card-content">
 						<div class="card-left">
@@ -256,6 +287,18 @@
 								</div>
 							</div>
 						</div>
+						<!-- The days since their latest contradiction; the date itself when
+						     only its month or year is known. -->
+						{#if st}
+							<div class="card-streak" title="{tr('streak.last', currentLang)} : {st.since || lastDate(st.person.last_contradiction_at ?? '')}">
+								{#if st.since}
+									<span class="since">{st.since}</span>
+								{:else}
+									<span class="days">{st.days.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR')}<small>{tr('streak.unit', currentLang)}</small></span>
+								{/if}
+								<span class="cap">{tr('streak.cap', currentLang)}</span>
+							</div>
+						{/if}
 					</div>
 				</a>
 			{/each}
@@ -273,6 +316,7 @@
 			<button class="load-more-btn" onclick={loadMore}>{tr('home.load_more', currentLang)}</button>
 		</div>
 	{/if}
+	{:else}
 
 	<section class="others">
 		<header class="section-header">
@@ -317,6 +361,7 @@
 			{/if}
 		{/if}
 	</section>
+	{/if}
 </div>
 
 <style>
@@ -669,4 +714,95 @@
 		box-shadow: var(--shadow-glow);
 	}
 
+	/* ---------- The top of the page: tight, the title and its tools ---------- */
+	.rank-head {
+		display: grid;
+		gap: 1.2rem;
+		margin: 0.5rem 0 1.5rem;
+		text-align: left;
+	}
+	.rank-head h1 {
+		font-size: clamp(2.2rem, 5vw, 3.4rem);
+		font-weight: 800;
+		letter-spacing: -0.04em;
+		line-height: 1;
+		text-align: left;
+	}
+	.rank-head p {
+		margin-top: 0.6rem;
+		max-width: 40rem;
+		color: var(--text-secondary);
+	}
+	.tools {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.8rem 1rem;
+	}
+	.tools .search-wrapper {
+		flex: 1;
+		min-width: 14rem;
+		max-width: 22rem;
+	}
+	.search-input {
+		border-radius: var(--radius-full);
+	}
+	.podium-wrap {
+		margin-bottom: 2.5rem;
+	}
+	.others {
+		margin-top: 0;
+		padding-top: 0;
+		border-top: 0;
+	}
+	/* ---------- The days without a contradiction, on a candidate's card ---------- */
+	.section-header {
+		scroll-margin-top: 6rem;
+	}
+	.order {
+		display: flex;
+		width: fit-content;
+		margin: 0.9rem auto 0;
+	}
+	.card-streak {
+		flex-shrink: 0;
+		display: grid;
+		justify-items: end;
+		gap: 0.15rem;
+		text-align: right;
+	}
+	.card-streak .days {
+		font-family: var(--font-num);
+		font-weight: 800;
+		font-size: 2rem;
+		line-height: 1;
+		color: var(--gold);
+		white-space: nowrap;
+	}
+	.card-streak .days small {
+		margin-left: 0.12rem;
+		font-family: var(--font-family);
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--text-muted);
+	}
+	.card-streak .since {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--gold);
+	}
+	.card-streak .cap {
+		max-width: 6.5rem;
+		font-size: 0.68rem;
+		line-height: 1.2;
+		color: var(--text-muted);
+	}
+	/* The name keeps its two words beside the counter: it wraps, never cut. */
+	.card-name .name-text {
+		white-space: normal;
+		overflow: visible;
+		text-overflow: clip;
+		line-height: 1.2;
+	}
 </style>

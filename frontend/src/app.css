@@ -1,61 +1,71 @@
 /* Design Tokens */
 :root {
-  /* Colors — oxblood-on-near-black, theatrical */
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #15131a;
-  --bg-card: rgba(38, 31, 42, 0.72);
-  --bg-card-hover: rgba(48, 39, 52, 0.88);
+  /* Colors: house lights down. A velvet dark, paper text, the curtain's red
+     (the logo's dot) as the signal, the footlights' gold for the streaks. */
+  --bg-primary: #100c12;
+  --bg-secondary: #18131d;
+  --bg-card: #18131d;
+  --bg-card-hover: #1f1925;
   /* Opaque surfaces over the cards: the dial's face, the bubbles. */
-  --bg-elevated: #1c1a22;
-  --border-card: rgba(184, 160, 148, 0.11);
-  --border-card-hover: rgba(184, 160, 148, 0.22);
-  --text-primary: #f1ebe4;
-  --text-secondary: #a99c92;
-  --text-muted: #6c6058;
-  --accent: #9a2640;
-  --accent-hover: #b8324f;
-  --accent-glow: rgba(154, 38, 64, 0.35);
+  --bg-elevated: #2a2231;
+  --border-card: rgba(245, 239, 230, 0.08);
+  --border-card-hover: rgba(245, 239, 230, 0.16);
+  --text-primary: #f5efe6;
+  --text-secondary: #b9aeb6;
+  --text-muted: #8f8290;
+  --accent: #e5384f;
+  --accent-hover: #ff6b7d;
+  --accent-glow: rgba(229, 56, 79, 0.32);
   /* The text on the accent. */
   --on-accent: #fff;
+  --gold: #f2b640;
+  --gold-glow: rgba(242, 182, 64, 0.16);
   /* The lab's temporary events (the presidential vote): their own colour, so
      they never read as the contradiction checker itself. */
-  --event: #7f9fd6;
-  --event-strong: #5b7fc0;
-  --event-glow: rgba(127, 159, 214, 0.14);
-  --green: #5fa56a;
-  --amber: #d4923a;
-  --red: #c2334a;
-  --error-bg: rgba(194, 51, 74, 0.1);
-  --error-border: rgba(194, 51, 74, 0.3);
+  --event: #8eaaf0;
+  --event-strong: #5b7fd6;
+  --event-glow: rgba(142, 170, 240, 0.14);
+  --green: #4fc28a;
+  --amber: #f2a93b;
+  --red: #ef4546;
+  --error-bg: rgba(239, 69, 70, 0.1);
+  --error-border: rgba(239, 69, 70, 0.3);
 
   /* The dial (TartuffeScore): its needle and the track behind the band. */
   --needle: #fff;
   --dial-track: rgba(255, 255, 255, 0.1);
   --dial-track-strong: rgba(255, 255, 255, 0.14);
-  /* The atmosphere behind the page: a soft glow at the top, a shadow at the bottom. */
+  /* The atmosphere behind the page: the curtain's glow at the top, a hint of
+     the footlights in a corner. */
   --atmosphere:
-    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(154, 38, 64, 0.08), transparent 70%),
-    radial-gradient(ellipse 100% 70% at 50% 100%, rgba(0, 0, 0, 0.5), transparent 70%);
-  --grain-opacity: 0.05;
+    radial-gradient(ellipse 70% 520px at 50% -120px, rgba(229, 56, 79, 0.16), transparent 70%),
+    radial-gradient(ellipse 40% 300px at 85% 0, rgba(242, 182, 64, 0.06), transparent 70%);
+  --grain-opacity: 0.04;
 
   /* Glass morphism */
-  --glass-blur: blur(12px);
-  --glass-bg: rgba(10, 10, 15, 0.78);
-  --glass-border: rgba(184, 160, 148, 0.12);
+  --glass-blur: blur(18px) saturate(140%);
+  --glass-bg: rgba(16, 12, 18, 0.72);
+  --glass-border: rgba(245, 239, 230, 0.08);
 
-  /* Typography */
-  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Typography: Schibsted Grotesk for what we write, Big Shoulders for the
+     numbers, Cormorant for the logo. */
+  --font-family: 'Schibsted Grotesk Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-num: 'Big Shoulders Variable', 'Arial Narrow', sans-serif;
   --font-serif: 'Cormorant Garamond', 'EB Garamond', Georgia, serif;
+  /* The titles of the pages: the grotesk, heavy and tight (the serif stays
+     the logo's). */
+  --font-display: var(--font-family);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Spacing */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.9rem;
+  --radius-lg: 1.25rem;
   --radius-full: 9999px;
 
   /* Shadows */
-  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
-  --shadow-card-hover: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 32px -18px rgba(0, 0, 0, 0.8);
+  --shadow-card-hover: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 20px 40px -18px rgba(0, 0, 0, 0.9);
   --shadow-glow: 0 0 20px var(--accent-glow);
 
   /* Transitions */
@@ -161,10 +171,10 @@ pre {
 /* Buttons of the vote pages (election, profile) and their dialogs. */
 .btn {
   min-height: 2.5rem;
-  padding: 0.5rem 1rem;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  padding: 0.5rem 1.2rem;
+  border: 1px solid var(--border-card-hover);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--text-primary);
   /* A button has the browser's font unless told: the site's. */
   font: inherit;
@@ -227,4 +237,117 @@ html {
 .page-content .section-lead {
   margin-left: auto;
   margin-right: auto;
+}
+
+/* ---------- The shared pieces of the look ---------- */
+/* A segmented switch: the tabs of a page (sort, kind, who). */
+.tabs {
+  display: inline-flex;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border-card);
+}
+.tabs > button,
+.tabs > a {
+  padding: 0.42rem 1rem;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 550;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.tabs > button:hover,
+.tabs > a:hover {
+  color: var(--text-primary);
+}
+.tabs > .on {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+/* On a narrow phone the tabs tighten, and a row that still does not fit
+   scrolls inside itself instead of widening the page. */
+.tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+@media (max-width: 420px) {
+  .tabs > button,
+  .tabs > a {
+    padding: 0.42rem 0.75rem;
+    font-size: 0.85rem;
+  }
+}
+/* The dot of what is live. */
+.live-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: live-dot 2s ease-out infinite;
+}
+@keyframes live-dot {
+  0% { box-shadow: 0 0 0 0 rgba(229, 56, 79, 0.55); }
+  70% { box-shadow: 0 0 0 0.55rem rgba(229, 56, 79, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(229, 56, 79, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+}
+/* The big buttons of a page. */
+.pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0 1.5rem;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  font: inherit;
+  font-weight: 650;
+  font-size: 0.98rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.pill-btn:active { transform: scale(0.97); }
+.pill-btn--red { background: var(--accent); color: #fff; box-shadow: 0 14px 30px -12px var(--accent-glow); }
+.pill-btn--red:hover { background: #f04a60; color: #fff; }
+.pill-btn--ghost { background: rgba(255, 255, 255, 0.05); border-color: var(--border-card-hover); color: var(--text-primary); }
+.pill-btn--ghost:hover { background: rgba(255, 255, 255, 0.09); color: var(--text-primary); }
+.pill-btn--blue { background: var(--event-strong); color: #fff; box-shadow: 0 14px 30px -12px rgba(91, 127, 214, 0.5); }
+.pill-btn--blue:hover { background: #6d8fe2; color: #fff; }
+.pill-btn--sm { min-height: 2.4rem; padding: 0 1rem; font-size: 0.88rem; }
+
+/* The titles of every page, in the look of the site: heavy, tight. A page
+   that wants its own weight says so with a class. */
+main.page-content h1 {
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+main.page-content h2 {
+  font-weight: 760;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+main.page-content h3 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }

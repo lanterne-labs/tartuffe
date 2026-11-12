@@ -294,13 +294,13 @@
 		text-align: center;
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(2rem, 5vw, 2.75rem);
 		font-weight: 600;
 		margin: 0 0 1.25rem;
 	}
 	h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.4rem;
 		font-weight: 600;
 		margin: 0 0 0.5rem;

@@ -288,7 +288,7 @@
 		align-self: center;
 	}
 	.big {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-variant-numeric: lining-nums tabular-nums;
 		font-size: 3.5rem;
 		font-weight: 600;

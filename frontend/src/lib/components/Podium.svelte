@@ -154,7 +154,7 @@
 	/* The title is the size of the landing page's section titles, on the
 	   landing page and the dashboard alike. */
 	.podium-header h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.9rem, 5.5vw, 2.6rem);
 		font-weight: 600;
 		line-height: 1.1;
@@ -329,7 +329,8 @@
 		.podium { gap: 0.25rem; }
 		.week { min-width: 9.5rem; }
 		.podium-section { padding: 1rem 0.5rem 0; }
-		.name { font-size: 0.8rem; }
+		/* Three steps share a phone's width: a long name takes two lines. */
+		.name { font-size: 0.8rem; white-space: normal; line-height: 1.2; }
 		.step--1 .name { font-size: 0.9rem; }
 		.meta { font-size: 0.7rem; }
 		/* The dials fit their column: the middle one a little larger. */
