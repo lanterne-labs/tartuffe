@@ -4,6 +4,8 @@
 	// (SiteNav), whose links leave for tartuffe.me only on a click. The
 	// event's title comes from the app's own build-time file, never from
 	// the site.
+	import '@fontsource-variable/schibsted-grotesk';
+	import '@fontsource-variable/big-shoulders';
 	import '@fontsource/inter/400.css';
 	import '@fontsource/inter/500.css';
 	import '@fontsource/inter/600.css';

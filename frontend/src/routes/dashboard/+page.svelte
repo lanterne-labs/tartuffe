@@ -8,6 +8,8 @@
 	import { API_BASE } from '$lib/config';
 	import { personPath } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
+	import { loadStreaks, type Streak } from '$lib/streaks';
+	import { displayName } from '$lib/share';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => {
@@ -32,6 +34,28 @@
 	let othersHasMore = $state(true);
 	const OTHERS_PAGE = 24;
 	let entityFilter: '' | 'party' | 'human' = $state('');
+	// Who the page lists: the candidates (the podium, the counters, the
+	// comparison, their cards), every other politician, or the parties.
+	type Who = 'candidates' | 'all' | 'party';
+	let who = $state<Who>('candidates');
+	function setWho(w: Who) {
+		who = w;
+		setFilter(w === 'party' ? 'party' : w === 'all' ? 'human' : '');
+	}
+	// The days without a contradiction of each candidate, the longest first.
+	let streaks: Streak[] = $state([]);
+	let streaksFor = '';
+	$effect(() => {
+		const key = candidates.map((p) => p.id).join(',') + currentLang;
+		if (candidates.length === 0 || key === streaksFor) return;
+		streaksFor = key;
+		loadStreaks(candidates, currentLang)
+			.then((v) => (streaks = v))
+			.catch((err) => console.error('failed to load the days without a contradiction', err));
+	});
+	function lastDate(iso: string): string {
+		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+	}
 	let searchQuery = $state('');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -163,7 +187,32 @@
 </svelte:head>
 
 <div class="dashboard">
-	<div class="podium-wrap"><Podium bind:this={podium} lang={currentLang} /></div>
+	<header class="rank-head">
+		<div>
+			<h1>{tr('rank.title', currentLang)}</h1>
+			<p>{tr('rank.sub', currentLang)}</p>
+		</div>
+		<div class="tools">
+			<div class="tabs" role="tablist">
+				{#each [['candidates', 'rank.tab.candidates'], ['all', 'rank.tab.all'], ['party', 'rank.tab.parties']] as [w, key] (w)}
+					<button role="tab" class:on={who === w} aria-selected={who === w} onclick={() => setWho(w as Who)}>{tr(key, currentLang)}</button>
+				{/each}
+			</div>
+			<div class="search-wrapper">
+				<svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<circle cx="11" cy="11" r="8"></circle>
+					<path d="m21 21-4.35-4.35"></path>
+				</svg>
+				<input
+					type="text"
+					placeholder={tr('home.search_placeholder', currentLang)}
+					value={searchQuery}
+					oninput={handleSearchInput}
+					class="search-input"
+				/>
+			</div>
+		</div>
+	</header>
 
 	{#if error}
 		<div class="error-banner">
@@ -172,43 +221,34 @@
 		</div>
 	{/if}
 
-	<div class="controls">
-		<div class="search-wrapper">
-			<svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="11" cy="11" r="8"></circle>
-				<path d="m21 21-4.35-4.35"></path>
-			</svg>
-			<input
-				type="text"
-				placeholder={tr('home.search_placeholder', currentLang)}
-				value={searchQuery}
-				oninput={handleSearchInput}
-				class="search-input"
-			/>
-		</div>
+	{#if who === 'candidates'}
+	<div class="podium-wrap"><Podium bind:this={podium} lang={currentLang} /></div>
 
-		<div class="filter-pills" role="group" aria-label="Filter by entity type">
-			<button
-				class="pill"
-				class:active={entityFilter === ''}
-				onclick={() => setFilter('')}
-				aria-pressed={entityFilter === ''}
-			>{tr('home.filter.all', currentLang)}</button>
-			<button
-				class="pill"
-				class:active={entityFilter === 'human'}
-				onclick={() => setFilter('human')}
-				aria-pressed={entityFilter === 'human'}
-			>{tr('home.filter.people', currentLang)}</button>
-			<button
-				class="pill"
-				class:active={entityFilter === 'party'}
-				onclick={() => setFilter('party')}
-				aria-pressed={entityFilter === 'party'}
-			>{tr('home.filter.parties', currentLang)}</button>
-		</div>
-	</div>
-
+	{#if streaks.length > 0}
+		<section class="streak-section" id="streaks">
+			<header class="section-header">
+				<h2 class="section-title">{tr('streak.title', currentLang)}</h2>
+				<p class="section-sub">{tr('streak.sub', currentLang)}</p>
+			</header>
+			<ol class="streak-grid">
+				{#each streaks as s, i (s.person.id)}
+					<li>
+						<a href={personPath(s.person.slug)} class="streak" class:lead={i === 0}>
+							<span class="streak-rank">{i + 1}</span>
+							{#if s.person.image_url}<img src={s.person.image_url} alt="" loading="lazy" />{:else}<span class="streak-ini">{s.person.name.charAt(0).toUpperCase()}</span>{/if}
+							<span class="streak-who">
+								<strong>{displayName(s.person.name)}</strong>
+								<small>{tr('streak.last_short', currentLang)} : {s.since || lastDate(s.person.last_contradiction_at ?? '')}</small>
+							</span>
+							{#if !s.since}
+								<span class="streak-days">{s.days.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR')}<small>{tr('streak.unit', currentLang)}</small></span>
+							{/if}
+						</a>
+					</li>
+				{/each}
+			</ol>
+		</section>
+	{/if}
 
 	{#if candidates.length > 1}
 		<section class="lineup-section">
@@ -273,6 +313,7 @@
 			<button class="load-more-btn" onclick={loadMore}>{tr('home.load_more', currentLang)}</button>
 		</div>
 	{/if}
+	{:else}
 
 	<section class="others">
 		<header class="section-header">
@@ -317,6 +358,7 @@
 			{/if}
 		{/if}
 	</section>
+	{/if}
 </div>
 
 <style>
@@ -669,4 +711,131 @@
 		box-shadow: var(--shadow-glow);
 	}
 
+	/* ---------- The top of the page: tight, the title and its tools ---------- */
+	.rank-head {
+		display: grid;
+		gap: 1.2rem;
+		margin: 0.5rem 0 1.5rem;
+		text-align: left;
+	}
+	.rank-head h1 {
+		font-size: clamp(2.2rem, 5vw, 3.4rem);
+		font-weight: 800;
+		letter-spacing: -0.04em;
+		line-height: 1;
+		text-align: left;
+	}
+	.rank-head p {
+		margin-top: 0.6rem;
+		max-width: 40rem;
+		color: var(--text-secondary);
+	}
+	.tools {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.8rem 1rem;
+	}
+	.tools .search-wrapper {
+		flex: 1;
+		min-width: 14rem;
+		max-width: 22rem;
+	}
+	.search-input {
+		border-radius: var(--radius-full);
+	}
+	.podium-wrap {
+		margin-bottom: 2.5rem;
+	}
+	.others {
+		margin-top: 0;
+		padding-top: 0;
+		border-top: 0;
+	}
+	/* ---------- The days without a contradiction ---------- */
+	.streak-section {
+		margin-bottom: 3rem;
+		scroll-margin-top: 6rem;
+	}
+	.streak-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+		gap: 0.7rem;
+		list-style: none;
+	}
+	.streak {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+		padding: 0.8rem 1rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--border-card);
+		background: var(--bg-card);
+		color: var(--text-primary);
+		transition: border-color 0.2s, transform 0.25s var(--ease), background 0.2s;
+	}
+	.streak:hover {
+		border-color: rgba(242, 182, 64, 0.35);
+		background: var(--bg-card-hover);
+		transform: translateY(-2px);
+		color: var(--text-primary);
+	}
+	.streak.lead {
+		border-color: rgba(242, 182, 64, 0.3);
+		background: radial-gradient(90% 140% at 0% 50%, rgba(242, 182, 64, 0.14), transparent 65%), var(--bg-card);
+	}
+	.streak-rank {
+		width: 1.4rem;
+		font-family: var(--font-num);
+		font-weight: 800;
+		font-size: 1.3rem;
+		color: var(--text-muted);
+		text-align: center;
+	}
+	.streak img,
+	.streak-ini {
+		width: 3.2rem;
+		height: 3.2rem;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
+	.streak-ini {
+		display: grid;
+		place-items: center;
+		background: var(--bg-elevated);
+		font-weight: 700;
+	}
+	.streak-who {
+		text-align: left;
+		flex: 1;
+		min-width: 0;
+		display: grid;
+		gap: 0.1rem;
+	}
+	.streak-who strong {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.streak-who small {
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+	.streak-days {
+		font-family: var(--font-num);
+		font-weight: 800;
+		font-size: 2.2rem;
+		line-height: 1;
+		color: var(--gold);
+		white-space: nowrap;
+	}
+	.streak-days small {
+		margin-left: 0.15rem;
+		font-family: var(--font-family);
+		font-size: 0.8rem;
+		font-weight: 500;
+		color: var(--text-muted);
+	}
 </style>

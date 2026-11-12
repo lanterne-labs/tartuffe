@@ -16,8 +16,13 @@
 		featured = null,
 		userName = null,
 		showProfile = false,
-		onsignout = () => {}
-	}: { lang: Lang; pathname: string; site?: string; featured?: Featured | null; userName?: string | null; showProfile?: boolean; onsignout?: () => void } = $props();
+		onsignout = () => {},
+		onsignin = null
+	}: { lang: Lang; pathname: string; site?: string; featured?: Featured | null; userName?: string | null; showProfile?: boolean; onsignout?: () => void; onsignin?: (() => void) | null } = $props();
+
+	// The three rubrics, in the middle of the bar; the About pages in a menu.
+	const RUBRICS: [string, string][] = [['nav.home', '/'], ['nav.feed', '/feed'], ['nav.ranking', '/dashboard']];
+	const ABOUT: [string, string][] = [['project', '/about'], ['lab', '/lab'], ['corrections', '/corrections'], ['privacy', '/about/privacy']];
 
 	// The nav's menus (the event's pages, the About pages) open on a click or
 	// a tap, on hover with a mouse, and close on Escape, outside, or on a new
@@ -59,6 +64,11 @@
 				<span class="brand-name">tartuffe<span class="brand-dot">.</span>me</span>
 			</span>
 		</a>
+		<div class="nav-seg">
+			{#each RUBRICS as [k, href] (k)}
+				<a href="{site}{href}" class:on={pathname === href} aria-current={pathname === href ? 'page' : undefined}>{tr(k, lang)}</a>
+			{/each}
+		</div>
 		<div class="nav-right">
 			{#if featured}
 				{@const ep = eventPaths(featured.slug)}
@@ -92,12 +102,10 @@
 					</div>
 				</div>
 			{/if}
-			<a href="{site}/feed" class="nav-link nav-link--feed" class:active={pathname === '/feed'}>{tr('nav.feed', lang)}</a>
-			<a href="{site}/dashboard" class="nav-link nav-link--home" class:active={pathname === "/dashboard"}>{tr('nav.dashboard', lang)}</a>
 			<div class="nav-drop nav-about nav-link--about" class:open={openMenu === 'about'} bind:this={menuEls.about} onfocusout={(e) => onMenuFocusOut('about', e)}>
 				<button
 					class="nav-link nav-link--menu"
-					class:active={pathname.startsWith('/about') || pathname === '/lab'}
+					class:active={pathname.startsWith('/about') || pathname === '/lab' || pathname === '/corrections'}
 					aria-haspopup="true"
 					aria-expanded={openMenu === 'about'}
 					aria-controls="about-menu"
@@ -107,7 +115,7 @@
 					<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
 				</button>
 				<div class="drop-menu drop-menu--end" id="about-menu">
-					{#each [['project', '/about'], ['lab', '/lab'], ['privacy', '/about/privacy']] as [k, href] (k)}
+					{#each ABOUT as [k, href] (k)}
 						<a href="{site}{href}" class:active={pathname === href} aria-current={pathname === href ? 'page' : undefined}>
 							<strong>{tr(`nav.menu.${k}`, lang)}</strong>
 						</a>
@@ -124,6 +132,8 @@
 				</span>
 			{:else if showProfile}
 				<a href="{site}/profile" class="nav-link nav-link--profile" class:active={pathname === '/profile'}>{tr('nav.profile', lang)}</a>
+			{:else if onsignin}
+				<button class="nav-link nav-link--menu nav-link--signin" onclick={onsignin}>{tr('auth.title', lang)}</button>
 			{/if}
 			<div class="lang-toggle" role="group" aria-label="Language">
 				<button
@@ -160,9 +170,10 @@
 					</svg>
 				</button>
 				<div class="drop-menu drop-menu--end" id="main-menu">
-					<a href="{site}/dashboard" class:active={pathname === '/dashboard'} aria-current={pathname === '/dashboard' ? 'page' : undefined}><strong>{tr('nav.dashboard', lang)}</strong></a>
-					<a href="{site}/feed" class:active={pathname === '/feed'} aria-current={pathname === '/feed' ? 'page' : undefined}><strong>{tr('nav.feed', lang)}</strong></a>
-					{#each [['project', '/about'], ['lab', '/lab'], ['privacy', '/about/privacy']] as [k, href] (k)}
+					{#each RUBRICS as [k, href] (k)}
+						<a href="{site}{href}" class:active={pathname === href} aria-current={pathname === href ? 'page' : undefined}><strong>{tr(k, lang)}</strong></a>
+					{/each}
+					{#each ABOUT as [k, href] (k)}
 						<a href="{site}{href}" class:active={pathname === href} aria-current={pathname === href ? 'page' : undefined}>
 							<strong>{tr(`nav.menu.${k}`, lang)}</strong>
 						</a>
@@ -175,6 +186,8 @@
 					{/if}
 					{#if userName}
 						<button class="menu-signout" onclick={onsignout}>{tr('auth.sign_out', lang)}</button>
+					{:else if onsignin}
+						<button class="menu-signout menu-signin" onclick={onsignin}>{tr('auth.title', lang)}</button>
 					{/if}
 				</div>
 			</div>
@@ -197,10 +210,39 @@
 		max-width: 1200px;
 		margin: 0 auto;
 		padding: 0.875rem 2rem;
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
-		justify-content: space-between;
-		gap: 2rem;
+		gap: 1.5rem;
+	}
+	/* The rubrics: a segmented switch in the middle of the bar. */
+	.nav-seg {
+		display: inline-flex;
+		gap: 0.15rem;
+		padding: 0.25rem;
+		border-radius: var(--radius-full);
+		background: rgba(255, 255, 255, 0.035);
+		border: 1px solid var(--border-card);
+	}
+	.nav-seg a {
+		padding: 0.42rem 1rem;
+		border-radius: var(--radius-full);
+		font-size: 0.9rem;
+		font-weight: 550;
+		color: var(--text-secondary);
+		white-space: nowrap;
+		transition: color 0.15s, background 0.15s;
+	}
+	.nav-seg a:hover {
+		color: var(--text-primary);
+	}
+	.nav-seg a.on {
+		color: var(--text-primary);
+		background: var(--bg-elevated);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 4px 12px rgba(0, 0, 0, 0.35);
+	}
+	.nav-brand {
+		justify-self: start;
 	}
 
 	.nav-brand {
@@ -247,16 +289,17 @@
 
 
 	.nav-right {
+		justify-self: end;
 		display: inline-flex;
 		align-items: center;
-		gap: 1rem;
+		gap: 0.9rem;
 	}
 
 	.nav-link {
-		font-size: 0.875rem;
-		font-weight: 500;
+		font-size: 0.9rem;
+		font-weight: 550;
 		color: var(--text-secondary);
-		letter-spacing: 0.02em;
+		white-space: nowrap;
 	}
 
 	.nav-link:hover {
@@ -349,13 +392,13 @@
 		z-index: 110;
 		display: grid;
 		gap: 2px;
-		min-width: 17rem;
-		margin-top: 0.5rem;
+		min-width: 14rem;
+		margin-top: 0.6rem;
 		padding: 0.35rem;
-		border: 1px solid var(--drop);
-		border-radius: var(--radius-lg);
-		background: var(--bg-secondary);
-		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+		border: 1px solid var(--border-card-hover);
+		border-radius: 0.9rem;
+		background: rgba(36, 28, 43, 0.97);
+		box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.7);
 		opacity: 0;
 		visibility: hidden;
 		transform: translateY(-4px);
@@ -398,12 +441,12 @@
 		text-decoration: none;
 	}
 	.drop-menu a strong {
-		font-size: 0.88rem;
-		font-weight: 600;
+		font-size: 0.9rem;
+		font-weight: 550;
 	}
 	.drop-menu a:hover,
 	.drop-menu a:focus-visible {
-		background: var(--drop-glow);
+		background: rgba(255, 255, 255, 0.06);
 	}
 	.drop-menu a.active {
 		background: var(--drop-glow);
@@ -502,8 +545,8 @@
 		color: var(--text-primary);
 	}
 	.lang-pill.active {
-		background: var(--accent);
-		color: var(--on-accent);
+		background: var(--bg-elevated);
+		color: var(--text-primary);
 	}
 
 	/* The menu of a phone or a tablet: hidden where the links fit. */
@@ -591,9 +634,12 @@
 		.nav-main {
 			display: block;
 		}
+		.nav-content {
+			grid-template-columns: 1fr auto;
+		}
+		.nav-seg,
+		.nav-link--signin,
 		.nav-link--about,
-		.nav-link--home,
-		.nav-link--feed,
 		.nav-user,
 		.nav-link--profile {
 			display: none;
