@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,38 +13,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCheck: a seat over the line is held until its window resets; a
-// reading is made once per Every; under the line, on a failure or without a
-// reserve there is no hold.
-func TestCheck(t *testing.T) {
+// TestHold: nothing is kept while a seat that serves has room; once none
+// has, the seat with the most left is kept until its window resets, and the
+// others go on; a seat with room again ends the hold. A seat is read once
+// per Every; an unknown usage or no reserve keeps nothing.
+func TestHold(t *testing.T) {
 	ctx := context.Background()
 	reset := time.Now().Add(3 * time.Hour)
+	var mu sync.Mutex
+	used := map[string]float64{"tok-a": 99, "tok-b": 50, "tok-c": 95}
 	reads := 0
 	r := New(90)
+	r.Every = time.Hour
 	r.Read = func(_ context.Context, token string) (Usage, error) {
+		mu.Lock()
+		defer mu.Unlock()
 		reads++
-		assert.Equal(t, "tok", token)
-		return Usage{FiveHour: &Window{Percent: 27}, SevenDay: &Window{Percent: 91, Reset: reset}}, nil
+		return Usage{FiveHour: &Window{Percent: 10}, SevenDay: &Window{Percent: used[token], Reset: reset}}, nil
 	}
-	assert.Equal(t, reset.Add(resetMargin), r.Check(ctx, "bob", "tok"))
-	assert.True(t, r.Check(ctx, "bob", "tok").IsZero(), "no second reading within Every")
-	assert.Equal(t, 1, reads)
+	seats := []Seat{{"a", "tok-a"}, {"b", "tok-b"}, {"c", "tok-c"}}
+	name, until := r.Hold(ctx, seats)
+	assert.Equal(t, "", name, "b has room: a and c may go to their end")
+	assert.True(t, until.IsZero())
+	name, _ = r.Hold(ctx, seats)
+	assert.Equal(t, "", name)
+	assert.Equal(t, 3, reads, "one reading per seat and Every")
 
-	below := New(90)
-	below.Read = func(context.Context, string) (Usage, error) {
-		return Usage{FiveHour: &Window{Percent: 89.9}, SevenDay: &Window{Percent: 40}}, nil
-	}
-	assert.True(t, below.Check(ctx, "bob", "tok").IsZero())
+	// b reached its limit and left the seats that serve: c has the most left.
+	name, until = r.Hold(ctx, []Seat{{"a", "tok-a"}, {"c", "tok-c"}})
+	assert.Equal(t, "c", name)
+	assert.Equal(t, reset.Add(resetMargin), until)
+
+	// b is back with room: nothing is kept.
+	name, _ = r.Hold(ctx, seats)
+	assert.Equal(t, "", name)
 
 	failed := New(90)
 	failed.Read = func(context.Context, string) (Usage, error) { return Usage{}, errors.New("no network") }
-	assert.True(t, failed.Check(ctx, "bob", "tok").IsZero())
+	name, _ = failed.Hold(ctx, seats[:1])
+	assert.Equal(t, "", name, "usage not known: nothing kept")
 
 	off := New(0)
-	off.Read = func(context.Context, string) (Usage, error) { t.Fatal("no reserve: no reading"); return Usage{}, nil }
-	assert.True(t, off.Check(ctx, "bob", "tok").IsZero())
+	off.Read = func(context.Context, string) (Usage, error) { t.Error("no reserve: no reading"); return Usage{}, nil }
+	name, _ = off.Hold(ctx, seats)
+	assert.Equal(t, "", name)
 	var none *Reserve
-	assert.True(t, none.Check(ctx, "bob", "tok").IsZero())
+	name, _ = none.Hold(ctx, seats)
+	assert.Equal(t, "", name)
 }
 
 func TestHoldUntil(t *testing.T) {

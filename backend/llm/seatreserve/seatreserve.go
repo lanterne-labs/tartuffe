@@ -1,16 +1,20 @@
-// Package seatreserve keeps the end of a Claude seat's usage for the tasks
-// that must always find a model.
+// Package seatreserve keeps the end of the last Claude seat that still
+// serves for the tasks that must always find a model.
 //
 // The pipeline (extraction, the maintenance pass) uses every seat until its
 // limit, and the X bot then has no model to write a tweet or to rewrite one
 // when its reader asks (2026-11-12: the 12:00 slot got no draft, the seats
-// came back a minute after it). A Reserve watches one seat: once the seat's
-// 5 h or 7 d usage reaches Percent, Check gives the time until which the seat
-// is to be kept for the reserved tasks (the reset of that window).
+// came back a minute after it). The pipeline may still use a seat to its
+// end, as long as another seat has room: only the last seat with room is
+// kept. A Reserve reads the usage of the seats that serve, and once none of
+// them is under Percent of its 5 h or 7 d window it names the one to keep
+// for the reserved tasks: the one with the most left. The others go on to
+// their limit. As soon as a seat has room again (a window reset), nothing
+// is kept.
 //
-// The package knows nothing of the endpoint, its seats or its tasks: the
-// endpoint asks Check before a call that is not reserved and applies the
-// hold itself (llm.ClaudeTeamEndpoint).
+// The package knows nothing of the endpoint or its tasks: the endpoint gives
+// the seats that serve to Hold before a call that is not reserved and
+// applies the answer itself (llm.ClaudeTeamEndpoint).
 //
 // The usage of a seat is not in the CLI's replies: it is in the headers of
 // every /v1/messages answer (anthropic-ratelimit-unified-5h-utilization and
@@ -28,10 +32,10 @@ import (
 )
 
 const (
-	// DefaultPercent: the others leave the seat at 90 % of a window.
+	// DefaultPercent: the last seat with room is left at 90 % of a window.
 	DefaultPercent = 90
-	// DefaultEvery is the least time between two readings: 4 processes use
-	// about 0.5 % of the 5 h window per minute.
+	// DefaultEvery is the least time between two readings of a seat: 4
+	// processes use about 0.5 % of the 5 h window per minute.
 	DefaultEvery = time.Minute
 	// resetMargin is added to a reset time: the window must have reset when
 	// the hold ends.
@@ -42,19 +46,34 @@ const (
 	readTimeout = 15 * time.Second
 )
 
-// Reserve watches the usage of one seat. The zero value keeps no reserve.
+// Seat is a seat that serves: its name (for the logs) and its token.
+type Seat struct {
+	Name, Token string
+}
+
+// Reserve reads the usage of the seats and names the one to keep. The zero
+// value keeps no reserve.
 type Reserve struct {
-	// Percent is the usage of a window from which the seat is kept for the
-	// reserved tasks. 0: no reserve, no reading.
+	// Percent is the usage of a window from which a seat has no room. 0: no
+	// reserve, no reading.
 	Percent float64
-	// Every is the least time between two readings. 0: DefaultEvery.
+	// Every is the least time between two readings of a seat. 0: DefaultEvery.
 	Every time.Duration
 	// Read reads the usage of the seat of a token. nil: the package's Read.
 	Read func(ctx context.Context, token string) (Usage, error)
 
 	mu       sync.Mutex
-	last     time.Time // the start of the last reading
-	failures int       // the readings that failed in a row
+	readings map[string]*reading // by seat name
+	kept     string              // the seat kept at the last answer, for the logs
+}
+
+// reading is what is known of a seat: its last usage (ok: one was read), the
+// start of the last reading, and the readings that failed in a row.
+type reading struct {
+	usage    Usage
+	ok       bool
+	started  time.Time
+	failures int
 }
 
 // New returns the reserve at percent of a window (0: none).
@@ -62,57 +81,101 @@ func New(percent float64) *Reserve {
 	return &Reserve{Percent: percent}
 }
 
-// Check reads the usage of the seat (name, for the logs; token) when the last
-// reading is older than Every, and returns the time until which the seat is
-// to be kept for the reserved tasks; zero: no hold (under the line, no
-// reading due, or a reading that failed: the seat then serves everyone, as
-// without a reserve, and the failure is logged). One reading at a time: a
-// call during a reading returns zero at once.
-func (r *Reserve) Check(ctx context.Context, name, token string) time.Time {
-	if r == nil || r.Percent <= 0 {
-		return time.Time{}
+// Hold returns the seat to keep for the reserved tasks among the seats that
+// serve, and until when; "" when a seat still has room, when the usage of a
+// seat is not known (a reading failed: nothing is kept, as without a
+// reserve, and the failure is logged), or without a reserve. It first reads
+// the seats whose reading is older than Every, all at once.
+func (r *Reserve) Hold(ctx context.Context, serving []Seat) (name string, until time.Time) {
+	if r == nil || r.Percent <= 0 || len(serving) == 0 {
+		return "", time.Time{}
 	}
+	r.refresh(ctx, serving)
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var left float64
+	for _, s := range serving {
+		rd := r.readings[s.Name]
+		if rd == nil || !rd.ok {
+			name = ""
+			break
+		}
+		end := rd.usage.HoldUntil(r.Percent, now)
+		if end.IsZero() {
+			name = "" // this seat has room: the pipeline uses the others to their end
+			break
+		}
+		if room := 100 - rd.usage.Used(); name == "" || room > left {
+			name, until, left = s.Name, end, room
+		}
+	}
+	if name == "" {
+		until = time.Time{}
+	}
+	if name != r.kept {
+		r.kept = name
+		if name == "" {
+			log.Info().Msg("seat reserve: a seat has room again; no seat is kept")
+		} else {
+			log.Warn().Str("seat", name).Float64("reserve_percent", r.Percent).Float64("used_percent", 100-left).Time("held_until", until).
+				Msg("seat reserve: no other seat has room; only the reserved tasks use this seat until its window resets")
+		}
+	}
+	return name, until
+}
+
+// refresh reads the seats whose reading is due, at once, and stores the
+// results. A seat being read by another call is not read again.
+func (r *Reserve) refresh(ctx context.Context, serving []Seat) {
 	every := r.Every
 	if every <= 0 {
 		every = DefaultEvery
 	}
-	now := time.Now()
-	r.mu.Lock()
-	if now.Sub(r.last) < every {
-		r.mu.Unlock()
-		return time.Time{}
-	}
-	r.last = now
 	read := r.Read
-	r.mu.Unlock()
 	if read == nil {
 		read = Read
 	}
-	rctx, cancel := context.WithTimeout(ctx, readTimeout)
-	defer cancel()
-	usage, err := read(rctx, token)
+	now := time.Now()
+	var due []Seat
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err != nil {
-		r.failures++
-		if ctx.Err() == nil && (r.failures == 1 || r.failures%30 == 0) {
-			log.Warn().Err(err).Str("seat", name).Int("consecutive", r.failures).
-				Msg("seat reserve: reading the usage of the seat failed; no reserve is kept until a reading succeeds")
+	if r.readings == nil {
+		r.readings = map[string]*reading{}
+	}
+	for _, s := range serving {
+		rd := r.readings[s.Name]
+		if rd == nil {
+			rd = &reading{}
+			r.readings[s.Name] = rd
 		}
-		return time.Time{}
+		if now.Sub(rd.started) >= every {
+			rd.started = now
+			due = append(due, s)
+		}
 	}
-	r.failures = 0
-	until := usage.HoldUntil(r.Percent, now)
-	if until.IsZero() {
-		return until
+	r.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, s := range due {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rctx, cancel := context.WithTimeout(ctx, readTimeout)
+			defer cancel()
+			usage, err := read(rctx, s.Token)
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			rd := r.readings[s.Name]
+			if err != nil {
+				rd.ok = false
+				rd.failures++
+				if ctx.Err() == nil && (rd.failures == 1 || rd.failures%30 == 0) {
+					log.Warn().Err(err).Str("seat", s.Name).Int("consecutive", rd.failures).
+						Msg("seat reserve: reading the usage of the seat failed; no reserve is kept until a reading succeeds")
+				}
+				return
+			}
+			rd.usage, rd.ok, rd.failures = usage, true, 0
+		}()
 	}
-	ev := log.Warn().Str("seat", name).Float64("reserve_percent", r.Percent).Time("held_until", until)
-	if usage.FiveHour != nil {
-		ev = ev.Float64("five_hour_percent", usage.FiveHour.Percent)
-	}
-	if usage.SevenDay != nil {
-		ev = ev.Float64("seven_day_percent", usage.SevenDay.Percent)
-	}
-	ev.Msg("seat reserve: the seat is at its reserve; only the reserved tasks use it until its window resets")
-	return until
+	wg.Wait()
 }

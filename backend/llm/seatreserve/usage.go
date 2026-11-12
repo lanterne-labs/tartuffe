@@ -23,6 +23,17 @@ type Usage struct {
 	FiveHour, SevenDay *Window
 }
 
+// Used is the percentage used of the fullest window.
+func (u Usage) Used() float64 {
+	var used float64
+	for _, w := range []*Window{u.FiveHour, u.SevenDay} {
+		if w != nil && w.Percent > used {
+			used = w.Percent
+		}
+	}
+	return used
+}
+
 // HoldUntil returns the time until which a seat at this usage is kept for the
 // reserved tasks: the latest reset of the windows at or over percent (now +
 // holdUnknown for a window without a reset); zero when no window is.
