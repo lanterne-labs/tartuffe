@@ -179,7 +179,7 @@
 		margin-bottom: 3rem;
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(2.1rem, 6vw, 3.2rem);
 		font-weight: 600;
 		line-height: 1.08;
@@ -216,13 +216,13 @@
 		margin-top: 2.75rem;
 	}
 	h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.6rem;
 		font-weight: 600;
 		margin: 0 0 1rem;
 	}
 	h3 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.45rem;
 		font-weight: 600;
 		margin: 0.35rem 0 0.6rem;

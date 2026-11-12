@@ -378,7 +378,7 @@
 		color: var(--text-secondary);
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(2.6rem, 7vw, 4.2rem);
 		font-weight: 600;
 		line-height: 1.05;
@@ -607,7 +607,7 @@
 		background: var(--glass-border);
 	}
 	.ph-title {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.2rem;
 		font-weight: 600;
 		margin-bottom: 0.6rem;
@@ -684,7 +684,7 @@
 	}
 
 	h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.8rem, 4.5vw, 2.6rem);
 		font-weight: 600;
 		line-height: 1.1;
@@ -758,7 +758,7 @@
 		text-align: center;
 	}
 	.why h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.6rem, 4.5vw, 2.2rem);
 		line-height: 1.15;
 		margin: 0.4rem 0 1.2rem;
@@ -808,7 +808,7 @@
 		text-align: center;
 	}
 	.polls h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.6rem, 4.5vw, 2.2rem);
 		line-height: 1.15;
 		margin: 0.4rem 0 0.8rem;
@@ -845,7 +845,7 @@
 		text-align: center;
 	}
 	.private h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.6rem, 4.5vw, 2.2rem);
 		line-height: 1.15;
 		margin: 0.4rem 0 1rem;

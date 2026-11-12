@@ -121,7 +121,7 @@
 	.quote {
 		fill: var(--text-primary);
 		font-size: 13px;
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-weight: 600;
 	}
 	.judge rect {

@@ -20,6 +20,8 @@
 	import ReportButton from '$lib/components/ReportButton.svelte';
 	import LikeButton from '$lib/components/LikeButton.svelte';
 	import { authFetch } from '$lib/auth';
+	import ClashCard from '$lib/components/ClashCard.svelte';
+	import type { FeedItem, FeedPage } from '$lib/types';
 	import type { ShareTarget } from '$lib/types';
 	import { tick } from 'svelte';
 
@@ -445,6 +447,37 @@
 		return `${month(person.collected_from)} → ${month(person.collected_to)}`;
 	});
 
+	// The person's latest contradictions, as cards under the header: the
+	// reader sees what the score is made of before the charts and the stances.
+	let clashes: FeedItem[] = $state([]);
+	let clashesFor = 0;
+	$effect(() => {
+		const id = person?.id;
+		if (!id || id === clashesFor) return;
+		clashesFor = id;
+		clashes = [];
+		authFetch(`/api/feed?sort=new&kind=contradiction&person=${id}&limit=3`)
+			.then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+			.then((p: FeedPage) => {
+				if (person?.id === id) clashes = (p.items ?? []).filter((it) => it.other);
+			})
+			.catch((err) => console.error('failed to load the latest contradictions', err));
+	});
+
+	// The days since the latest contradiction, digit by digit for the tiles;
+	// null when only its month or year is known (a count would be made up).
+	let streak = $derived.by(() => {
+		const iso = person?.last_contradiction_at;
+		if (!iso) return null;
+		const precision = person?.last_contradiction_precision;
+		const exact = precision !== 'year' && precision !== 'month';
+		const days = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+		const date = exact
+			? new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+			: statementDateText(iso, precision, currentLang);
+		return { digits: exact ? String(days).padStart(3, '0').split('') : null, date };
+	});
+
 	// A count as the reader's language writes it (4 929, 4,929).
 	function count(n: number): string {
 		return n.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR');
@@ -519,12 +552,12 @@
 <!-- The call to the vote of a presidential candidate's page: to the vote's
      presentation, never the ballot (a voter reads what the vote is first). -->
 {#snippet voteCall(corner: boolean)}
-	<aside class="vote-call" class:vote-call--corner={corner}>
+	<aside class="p-vote" class:p-vote--end={!corner}>
 		<div>
-			<h2>{tr('person.vote.title', currentLang)}</h2>
-			{#if !corner}<p>{tr('person.vote.body', currentLang)}</p>{/if}
+			<strong>{tr('person.vote.title', currentLang)}</strong>
+			<p>{tr('person.vote.body', currentLang)}</p>
 		</div>
-		<a href={eventPaths().intro}>{tr('person.vote.cta', currentLang)} →</a>
+		<a class="pill-btn pill-btn--blue pill-btn--sm" href={eventPaths().intro}>{tr('person.vote.cta', currentLang)}</a>
 	</aside>
 {/snippet}
 
@@ -558,67 +591,92 @@
 			<button class="retry-btn" onclick={loadData}>{tr('person.retry', currentLang)}</button>
 		</div>
 	{:else if person}
-		<div class="person-hero">
-			<div class="hero-left">
-				<TartuffeScore honesty={scored ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} />
-				<div class="hero-info">
-					<h1>
-						{person.name}
-						{#if person.entity_type === 'party'}
-							<span class="badge">{tr('person.party_badge', currentLang)}</span>
-						{/if}
-					</h1>
+		<header class="p-hero">
+			<div class="p-id">
+				<div class="p-dial">
+					<TartuffeScore honesty={scored ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} />
 				</div>
-			</div>
-			<!-- The record in boxes, each with its label, always in the same
-			     place: the counts on the first row, the dates on the second. -->
-			<dl class="hero-stats">
-				<div class="stat">
-					<dd>{count(person.fact_count)}</dd>
-					<dt>{tr('person.stat.facts', currentLang)}</dt>
-				</div>
-				{#if scored}
-					<div class="stat">
-						<dd>{count(person.stance_count)}</dd>
-						<dt>{tr('person.stat.stances', currentLang)}</dt>
-					</div>
-					<div class="stat">
-						<dd>{count(person.contradiction_count)}</dd>
-						<dt>{tr('person.stat.contradictions', currentLang)}</dt>
-					</div>
-				{/if}
-				{#if collected}
-					<div class="stat stat--wide">
-						<dd>{collected}</dd>
-						<dt>{tr('person.stat.period', currentLang)}</dt>
-					</div>
-				{/if}
-				{#if scored && lastContradiction}
-					<div class="stat stat--wide" title={tr('person.last_contradiction_hint', currentLang)}>
-						<dd>{lastContradiction}</dd>
-						<dt>{tr('person.stat.last', currentLang)}</dt>
-					</div>
-				{/if}
-			</dl>
-			<div class="hero-foot">
-				{#if scored}
-					<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
-					{#if !person.candidate}
-						<p class="hero-note">{tr('person.detection_paused_note', currentLang)}</p>
+				<div class="p-info">
+					{#if person.candidate && person.entity_type === 'human'}
+						<a class="p-tag" href={eventPaths().intro}>{tr('person.tag.candidate', currentLang)}</a>
+					{:else if person.entity_type === 'party'}
+						<span class="p-tag p-tag--plain">{tr('person.party_badge', currentLang)}</span>
 					{/if}
-					<p class="hero-note">{tr('person.ai_note', currentLang)} <a href="/about">{tr('person.ai_note_link', currentLang)}</a></p>
+					<h1>{person.name}</h1>
+					{#if collected}
+						<p class="p-period">{tr('person.stat.period', currentLang)} : {collected}</p>
+					{/if}
+					<div class="p-actions">
+						{#if scored}
+							<a class="chip" href="/feed?person={person.id}">{tr('feed.person', currentLang)}</a>
+						{/if}
+						<ShareMenu label item={{ kind: 'person', id: person.id, personSlug: person.slug, personName: person.name, score: scored ? person.honesty_score : undefined }} />
+					</div>
+				</div>
+			</div>
+
+			<!-- The record: the days without a contradiction on the left, the
+			     counts on the right, always in the same place. -->
+			<div class="p-board" class:p-board--plain={!(scored && streak)}>
+				{#if scored && streak}
+					<div class="p-streak" title={tr('person.last_contradiction_hint', currentLang)}>
+						{#if streak.digits}
+							<div class="tiles" aria-hidden="true">
+								{#each streak.digits as d, i (i)}<span class="tile"><b>{d}</b></span>{/each}
+							</div>
+							<div class="streak-text">
+								<strong>{tr('person.streak.days', currentLang)}</strong>
+								<span>{tr('person.streak.last', currentLang, { d: streak.date })}</span>
+							</div>
+						{:else}
+							<div class="streak-text">
+								<strong>{tr('person.stat.last', currentLang)}</strong>
+								<span class="streak-date">{streak.date}</span>
+							</div>
+						{/if}
+					</div>
+				{/if}
+				<dl class="p-stats">
+					{#if scored}
+						<div><dt>{tr('person.stat.contradictions', currentLang)}</dt><dd class="red">{count(person.contradiction_count)}</dd></div>
+					{/if}
+					<div><dt>{tr('person.stat.facts', currentLang)}</dt><dd>{count(person.fact_count)}</dd></div>
+					{#if scored}
+						<div><dt>{tr('person.stat.stances', currentLang)}</dt><dd>{count(person.stance_count)}</dd></div>
+					{/if}
+				</dl>
+			</div>
+
+			<div class="p-notes">
+				{#if scored}
+					{#if !person.candidate}
+						<p>{tr('person.detection_paused_note', currentLang)}</p>
+					{/if}
+					<p>{tr('person.ai_note', currentLang)} <a href="/about">{tr('person.ai_note_link', currentLang)}</a></p>
 				{:else}
-					<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>
+					<p>{tr('person.no_detection_note', currentLang)}</p>
 				{/if}
 			</div>
-			<div class="hero-gauge">
-				<ShareMenu label item={{ kind: 'person', id: person.id, personSlug: person.slug, personName: person.name, score: scored ? person.honesty_score : undefined }} />
-			</div>
-			{#if person.candidate && person.entity_type === 'human'}
-				<!-- A candidate's page leads to the vote: its presentation first. -->
-				{@render voteCall(true)}
-			{/if}
-		</div>
+		</header>
+
+		{#if person.candidate && person.entity_type === 'human'}
+			<!-- A candidate's page leads to the vote: its presentation first. -->
+			{@render voteCall(true)}
+		{/if}
+
+		{#if clashes.length > 0}
+			<section class="p-section">
+				<div class="p-sec-head">
+					<h2>{tr('person.latest', currentLang)}</h2>
+					<a class="p-link" href="/feed?person={person.id}">{tr('person.latest.all', currentLang)}</a>
+				</div>
+				<div class="p-three" class:p-three--few={clashes.length < 3}>
+					{#each clashes as _, i (clashes[i].id)}
+						<ClashCard bind:item={clashes[i]} lang={currentLang} />
+					{/each}
+				</div>
+			</section>
+		{/if}
 
 		{#if person.candidate && person.entity_type !== 'human' && person.members_score != null}
 			<div class="score-breakdown">
@@ -690,15 +748,15 @@
 		     within that stance — that's where the contradictions live now (no separate tab). -->
 		<section class="stances-section">
 			<div class="stances-toolbar">
-				<h2 class="section-heading">{tr('person.stances', currentLang)}</h2>
+				<div>
+					<h2 class="section-heading">{tr('person.stances', currentLang)}</h2>
+					<p class="stances-sub">{tr('person.stances.sub', currentLang)}</p>
+				</div>
 				{#if stances.length > 1}
-					<div class="sort-control">
-						<label for="stance-sort">{tr('person.sort_by', currentLang)}</label>
-						<select id="stance-sort" bind:value={stanceSort}>
-							<option value="worst">{tr('person.sort.worst', currentLang)}</option>
-							<option value="recent">{tr('person.sort.recent', currentLang)}</option>
-							<option value="most_facts">{tr('person.sort.most_facts', currentLang)}</option>
-						</select>
+					<div class="tabs" role="tablist" aria-label={tr('person.sort_by', currentLang)}>
+						{#each ['worst', 'recent', 'most_facts'] as k (k)}
+							<button role="tab" class:on={stanceSort === k} aria-selected={stanceSort === k} onclick={() => (stanceSort = k as typeof stanceSort)}>{tr(`person.sort.${k}`, currentLang)}</button>
+						{/each}
 					</div>
 				{/if}
 			</div>
@@ -1043,7 +1101,7 @@
 		background: radial-gradient(ellipse 60% 100% at 0% 50%, var(--event-glow), transparent 70%), var(--bg-card);
 	}
 	.vote-call h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.3rem;
 		font-weight: 600;
 		line-height: 1.2;
@@ -1759,5 +1817,389 @@
 		white-space: nowrap;
 		font-size: 0.875rem;
 		font-weight: 600;
+	}
+	/* ================= The new look of the page ================= */
+	.detail-page {
+		max-width: 1000px;
+		margin: 0 auto;
+		text-align: left;
+	}
+	.detail-page h1,
+	.detail-page h2 {
+		text-align: left;
+	}
+	/* ---------- The header: the dial, the name, the record ---------- */
+	.p-hero {
+		display: grid;
+		gap: 1.6rem;
+		padding: 2rem;
+		border-radius: 1.75rem;
+		border: 1px solid var(--border-card);
+		background: radial-gradient(80% 100% at 0% 0%, rgba(242, 169, 59, 0.13), transparent 60%), var(--bg-card);
+		box-shadow: var(--shadow-card);
+	}
+	.p-id {
+		display: flex;
+		align-items: center;
+		gap: 2rem;
+	}
+	.p-dial {
+		flex-shrink: 0;
+	}
+	.p-info {
+		display: grid;
+		gap: 0.7rem;
+		min-width: 0;
+		justify-items: start;
+	}
+	.p-tag {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.15rem 0.6rem;
+		border-radius: var(--radius-full);
+		background: var(--event-glow);
+		color: var(--event);
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+	.p-tag:hover {
+		color: var(--event);
+		background: rgba(142, 170, 240, 0.24);
+	}
+	.p-tag--plain {
+		background: none;
+		border: 1px dashed var(--border-card-hover);
+		color: var(--text-muted);
+	}
+	.p-info h1 {
+		font-size: clamp(2.2rem, 5vw, 3.5rem);
+		font-weight: 800;
+		letter-spacing: -0.04em;
+		line-height: 1;
+		text-transform: capitalize;
+		text-wrap: balance;
+	}
+	.p-period {
+		font-size: 0.84rem;
+		color: var(--text-muted);
+	}
+	.p-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.3rem;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.25rem;
+		padding: 0 0.95rem;
+		border-radius: var(--radius-full);
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid var(--border-card-hover);
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		white-space: nowrap;
+	}
+	.chip:hover {
+		background: rgba(255, 255, 255, 0.09);
+		color: var(--text-primary);
+	}
+	.p-board {
+		display: grid;
+		grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+		gap: 1rem;
+		align-items: stretch;
+	}
+	.p-board--plain {
+		grid-template-columns: 1fr;
+	}
+	.p-streak {
+		display: flex;
+		align-items: center;
+		gap: 1.1rem;
+		padding: 1.2rem 1.4rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid rgba(242, 182, 64, 0.2);
+		background: radial-gradient(90% 140% at 0% 50%, rgba(242, 182, 64, 0.16), transparent 65%), rgba(0, 0, 0, 0.25);
+	}
+	.tiles {
+		display: flex;
+		gap: 0.3rem;
+		flex-shrink: 0;
+	}
+	.tile {
+		position: relative;
+		display: grid;
+		place-items: center;
+		width: 2.7rem;
+		height: 3.6rem;
+		border-radius: 0.5rem;
+		background: linear-gradient(180deg, #2c2433 0 50%, #221b28 50% 100%);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		box-shadow: 0 6px 14px rgba(0, 0, 0, 0.45);
+	}
+	.tile::after {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: 1px;
+		background: rgba(0, 0, 0, 0.55);
+	}
+	.tile b {
+		font-family: var(--font-num);
+		font-weight: 800;
+		font-size: 2.6rem;
+		line-height: 1;
+		color: var(--gold);
+	}
+	.streak-text {
+		display: grid;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+	.streak-text strong {
+		font-size: 1.05rem;
+		font-weight: 700;
+		line-height: 1.2;
+	}
+	.streak-text span {
+		font-size: 0.84rem;
+		color: var(--text-secondary);
+	}
+	.streak-text .streak-date {
+		font-family: var(--font-num);
+		font-weight: 800;
+		font-size: 2rem;
+		line-height: 1;
+		color: var(--gold);
+	}
+	.p-stats {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+		gap: 0.6rem;
+		margin: 0;
+	}
+	.p-stats > div {
+		display: grid;
+		align-content: center;
+		gap: 0.35rem;
+		padding: 0.9rem 1rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--border-card);
+		background: rgba(0, 0, 0, 0.22);
+	}
+	.p-stats dt {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+	.p-stats dd {
+		font-family: var(--font-num);
+		font-weight: 800;
+		font-size: 2.3rem;
+		line-height: 0.9;
+		font-variant-numeric: tabular-nums;
+	}
+	.p-stats dd.red {
+		color: var(--accent-hover);
+	}
+	.p-notes {
+		display: grid;
+		gap: 0.3rem;
+		max-width: 70ch;
+		font-size: 0.84rem;
+		color: var(--text-muted);
+	}
+	.p-notes a {
+		color: var(--accent-hover);
+	}
+	/* ---------- The call to the vote: a band in the event's blue ---------- */
+	.p-vote {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-top: 1rem;
+		padding: 1rem 1.3rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid rgba(142, 170, 240, 0.35);
+		background: radial-gradient(60% 140% at 0% 50%, rgba(142, 170, 240, 0.14), transparent 70%), var(--bg-card);
+	}
+	.p-vote--end {
+		margin-top: 3rem;
+	}
+	.p-vote strong {
+		font-size: 1.1rem;
+	}
+	.p-vote p {
+		margin-top: 0.2rem;
+		font-size: 0.84rem;
+		color: var(--text-muted);
+	}
+	/* ---------- Sections ---------- */
+	.p-section {
+		margin-top: 3rem;
+	}
+	.p-sec-head {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1.2rem;
+	}
+	.p-sec-head h2,
+	.section-heading,
+	.compare-section h2 {
+		font-family: var(--font-family);
+		font-size: 1.6rem;
+		font-weight: 760;
+		letter-spacing: -0.035em;
+		line-height: 1.1;
+		text-transform: none;
+		color: var(--text-primary);
+	}
+	.p-link {
+		font-weight: 600;
+		font-size: 0.92rem;
+		color: var(--text-secondary);
+		border-bottom: 1px solid var(--border-card-hover);
+		white-space: nowrap;
+	}
+	.p-link:hover {
+		color: var(--text-primary);
+	}
+	.p-three {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 1rem;
+		align-items: start;
+	}
+	.p-three--few {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.charts {
+		margin-top: 3rem;
+	}
+	.history-section {
+		padding: 1.3rem 1.4rem;
+		border-radius: var(--radius-lg);
+		border: 1px solid var(--border-card);
+		background: var(--bg-card);
+		box-shadow: var(--shadow-card);
+	}
+	.history-section .section-heading {
+		font-size: 1.2rem;
+		margin-bottom: 0.8rem;
+	}
+	.stances-section {
+		margin-top: 3rem;
+	}
+	.stances-toolbar {
+		align-items: flex-end;
+		flex-wrap: wrap;
+		gap: 0.8rem 1rem;
+		margin-bottom: 1.2rem;
+	}
+	.stances-sub {
+		margin-top: 0.4rem;
+		color: var(--text-secondary);
+	}
+	.stance-card {
+		border-radius: var(--radius-lg);
+		transition: border-color 0.2s, background 0.2s;
+	}
+	@media (hover: hover) {
+		.stance-card:hover {
+			border-color: var(--border-card-hover);
+		}
+	}
+	.compare-section {
+		margin-top: 3.5rem;
+	}
+	.compare-section h2 {
+		margin-bottom: 1rem;
+	}
+	@media (max-width: 860px) {
+		.p-three,
+		.p-three--few {
+			grid-template-columns: 1fr;
+		}
+		.p-board {
+			grid-template-columns: 1fr;
+		}
+	}
+	@media (max-width: 640px) {
+		.p-hero {
+			padding: 1.3rem;
+		}
+		.p-id {
+			flex-direction: column;
+			align-items: center;
+			gap: 1rem;
+		}
+		.p-info {
+			justify-items: center;
+			text-align: center;
+		}
+		.detail-page .p-info h1 {
+			text-align: center;
+		}
+		.p-actions {
+			justify-content: center;
+		}
+		.p-vote {
+			flex-direction: column;
+			align-items: stretch;
+			text-align: left;
+		}
+		.p-stats dd {
+			font-size: 1.9rem;
+		}
+	}
+	/* A narrow phone: nothing in the header is wider than its card. */
+	.p-hero > *,
+	.p-board > * {
+		min-width: 0;
+	}
+	@media (max-width: 640px) {
+		.p-stats {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+		.p-stats {
+			gap: 0.4rem;
+		}
+		.p-stats > div {
+			padding: 0.8rem 0.5rem;
+			justify-items: center;
+			text-align: center;
+		}
+		.p-stats dt {
+			font-size: 0.62rem;
+			white-space: nowrap;
+		}
+		.p-stats dd {
+			font-size: 1.6rem;
+			white-space: nowrap;
+		}
+	}
+	@media (max-width: 400px) {
+		.p-streak {
+			gap: 0.8rem;
+			padding: 1rem;
+		}
+		.tile {
+			width: 2.1rem;
+			height: 2.9rem;
+		}
+		.tile b {
+			font-size: 2rem;
+		}
+		.streak-text strong {
+			font-size: 0.95rem;
+		}
 	}
 </style>

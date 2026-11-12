@@ -66,7 +66,7 @@
 	.legal { max-width: 760px; margin: 0 auto; padding: 1rem 0 3rem; }
 	/* The kicker and the title as on the other pages (about, privacy). */
 	.kicker { display: block; text-align: center; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-hover); }
-	h1 { font-family: var(--font-serif); font-size: clamp(2rem, 6.5vw, 3.1rem); font-weight: 600; line-height: 1.08; margin: 0.35rem 0 0.75rem; }
+	h1 { font-family: var(--font-display); font-size: clamp(2rem, 6.5vw, 3.1rem); font-weight: 600; line-height: 1.08; margin: 0.35rem 0 0.75rem; }
 	.lead { color: var(--text-secondary); line-height: 1.6; }
 	.address { margin: 1.5rem 0; text-align: center; font-size: 1.125rem; font-weight: 600; }
 	.address a { display: inline-flex; align-items: center; min-height: 2.5rem; padding: 0 0.5rem; }

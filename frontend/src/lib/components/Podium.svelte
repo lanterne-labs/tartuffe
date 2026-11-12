@@ -154,7 +154,7 @@
 	/* The title is the size of the landing page's section titles, on the
 	   landing page and the dashboard alike. */
 	.podium-header h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.9rem, 5.5vw, 2.6rem);
 		font-weight: 600;
 		line-height: 1.1;

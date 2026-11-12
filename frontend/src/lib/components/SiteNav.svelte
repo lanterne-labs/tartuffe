@@ -684,4 +684,13 @@
 			display: none;
 		}
 	}
+	/* The narrowest phones: the mask alone stands for the name. */
+	.nav-brand {
+		min-width: 0;
+	}
+	@media (max-width: 380px) {
+		.brand-text {
+			display: none;
+		}
+	}
 </style>

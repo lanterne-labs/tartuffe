@@ -85,7 +85,7 @@
 		margin: 1rem auto 3rem;
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(2rem, 5vw, 2.75rem);
 		font-weight: 600;
 		margin: 0;

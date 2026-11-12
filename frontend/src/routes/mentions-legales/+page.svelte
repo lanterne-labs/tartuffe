@@ -121,7 +121,7 @@
 
 <style>
 	.legal { max-width: 760px; margin: 0 auto; padding: 1rem 0 3rem; line-height: 1.6; }
-	h1 { font-family: var(--font-serif); font-size: clamp(1.9rem, 5vw, 2.5rem); font-weight: 600; line-height: 1.15; margin-bottom: 1.5rem; }
+	h1 { font-family: var(--font-display); font-size: clamp(1.9rem, 5vw, 2.5rem); font-weight: 600; line-height: 1.15; margin-bottom: 1.5rem; }
 	section { margin-bottom: 1.5rem; }
 	h2 { font-size: 1.05rem; margin-bottom: 0.5rem; }
 	p, li { color: var(--text-secondary); font-size: 0.925rem; margin-bottom: 0.5rem; }

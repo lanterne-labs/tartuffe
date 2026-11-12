@@ -52,6 +52,9 @@
   --font-family: 'Schibsted Grotesk Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-num: 'Big Shoulders Variable', 'Arial Narrow', sans-serif;
   --font-serif: 'Cormorant Garamond', 'EB Garamond', Georgia, serif;
+  /* The titles of the pages: the grotesk, heavy and tight (the serif stays
+     the logo's). */
+  --font-display: var(--font-family);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Spacing */
@@ -168,10 +171,10 @@ pre {
 /* Buttons of the vote pages (election, profile) and their dialogs. */
 .btn {
   min-height: 2.5rem;
-  padding: 0.5rem 1rem;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  padding: 0.5rem 1.2rem;
+  border: 1px solid var(--border-card-hover);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--text-primary);
   /* A button has the browser's font unless told: the site's. */
   font: inherit;
@@ -329,3 +332,22 @@ html {
 .pill-btn--blue { background: var(--event-strong); color: #fff; box-shadow: 0 14px 30px -12px rgba(91, 127, 214, 0.5); }
 .pill-btn--blue:hover { background: #6d8fe2; color: #fff; }
 .pill-btn--sm { min-height: 2.4rem; padding: 0 1rem; font-size: 0.88rem; }
+
+/* The titles of every page, in the look of the site: heavy, tight. A page
+   that wants its own weight says so with a class. */
+main.page-content h1 {
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+main.page-content h2 {
+  font-weight: 760;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+main.page-content h3 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}

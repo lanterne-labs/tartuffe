@@ -77,7 +77,7 @@
 	}
 	.topic {
 		fill: var(--text-primary);
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 15px;
 		font-weight: 600;
 	}

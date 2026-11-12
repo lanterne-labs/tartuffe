@@ -274,7 +274,7 @@
 		text-align: center;
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(1.7rem, 5vw, 2.3rem);
 		line-height: 1.15;
 		margin: 1.5rem 0 0.5rem;

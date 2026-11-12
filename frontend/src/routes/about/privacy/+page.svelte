@@ -223,7 +223,7 @@
 		color: var(--accent-hover);
 	}
 	h1 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: clamp(2rem, 6.5vw, 3.1rem);
 		font-weight: 600;
 		line-height: 1.08;
@@ -260,7 +260,7 @@
 		margin-bottom: 2.75rem;
 	}
 	h2 {
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.6rem;
 		font-weight: 600;
 		margin: 0 0 0.9rem;

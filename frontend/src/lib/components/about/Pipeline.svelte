@@ -246,7 +246,7 @@
 	}
 	.node-label {
 		fill: var(--text-secondary);
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 17px;
 		font-weight: 600;
 	}
@@ -319,7 +319,7 @@
 		display: flex;
 		align-items: baseline;
 		gap: 0.5rem;
-		font-family: var(--font-serif);
+		font-family: var(--font-display);
 		font-size: 1.3rem;
 		font-weight: 600;
 		margin: 0.45rem 0 0.4rem;
