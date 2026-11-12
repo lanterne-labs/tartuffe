@@ -975,96 +975,6 @@
 		border: 1px solid var(--border-card);
 		border-radius: var(--radius-lg);
 	}
-
-	/* The dial with the portrait, the name and the summary under it. */
-	.hero-left {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		text-align: center;
-		gap: 0.75rem;
-		min-width: 0;
-	}
-
-	.hero-info h1 {
-		font-size: 1.5rem;
-		font-weight: 700;
-		letter-spacing: -0.025em;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
-		text-transform: capitalize;
-	}
-
-	/* The boxes of the record: a value over its label. Three counts on the
-	   first row, the two dates on the second. */
-	.hero-stats {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: center;
-		gap: 0.5rem;
-		width: 100%;
-		max-width: 34rem;
-		margin: 0;
-	}
-
-	.stat {
-		flex: 1 1 calc(33.333% - 0.5rem);
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.2rem;
-		padding: 0.65rem 0.5rem;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-md);
-		background: var(--bg-card-hover);
-		text-align: center;
-	}
-
-	.stat--wide {
-		flex-basis: calc(50% - 0.5rem);
-	}
-
-	.stat dd {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
-		line-height: 1.2;
-		color: var(--text-primary);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.stat--wide dd {
-		font-size: 0.95rem;
-		font-weight: 600;
-	}
-
-	.stat dt {
-		font-size: 0.6875rem;
-		font-weight: 600;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
-	.hero-foot {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-		text-align: center;
-	}
-
-	.hero-note {
-		color: var(--text-muted);
-		font-size: 0.75rem;
-		max-width: 60ch;
-		margin: 0;
-	}
-
 	.dot {
 		margin: 0 0.25rem;
 		color: var(--text-muted);
@@ -1073,111 +983,7 @@
 	.muted {
 		color: var(--text-muted);
 	}
-
-	.badge {
-		background: rgba(59, 130, 246, 0.15);
-		color: var(--accent);
-		font-size: 0.688rem;
-		font-weight: 500;
-		padding: 0.125rem 0.5rem;
-		border-radius: var(--radius-full);
-	}
-
-	.hero-gauge {
-		flex-shrink: 0;
-		width: min(20rem, 100%);
-	}
-
-	/* The call to the vote */
-	.vote-call {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem 1.5rem;
-		flex-wrap: wrap;
-		margin: 0 0 1.5rem;
-		padding: 1rem 1.4rem;
-		border: 1px solid var(--event);
-		border-radius: var(--radius-lg);
-		background: radial-gradient(ellipse 60% 100% at 0% 50%, var(--event-glow), transparent 70%), var(--bg-card);
-	}
-	.vote-call h2 {
-		font-family: var(--font-display);
-		font-size: 1.3rem;
-		font-weight: 600;
-		line-height: 1.2;
-		margin: 0 0 0.25rem;
-		text-align: left;
-	}
-	.vote-call p {
-		margin: 0;
-		font-size: 0.875rem;
-		color: var(--text-secondary);
-		max-width: 44ch;
-	}
-	.vote-call a {
-		display: inline-flex;
-		align-items: center;
-		padding: 0.7rem 1.4rem;
-		border-radius: var(--radius-full);
-		background: var(--event-strong);
-		color: #fff;
-		font-weight: 600;
-		text-decoration: none;
-		white-space: nowrap;
-		box-shadow: 0 8px 28px var(--event-glow);
-		transition: all var(--transition-fast);
-	}
-	.vote-call a:hover {
-		background: var(--event);
-		transform: translateY(-1px);
-	}
-
-	.vote-call--corner {
-		width: 100%;
-		margin: 0;
-		padding: 0.8rem 1rem;
-		gap: 0.6rem 1rem;
-	}
-	.vote-call--corner h2 {
-		font-size: 1.1rem;
-		margin: 0;
-	}
-	.vote-call--corner a {
-		padding: 0.55rem 1.1rem;
-		font-size: 0.9rem;
-	}
 	/* Under the hero on a phone: one line, the question and its button. */
-	@media (max-width: 899px) {
-		.vote-call--corner {
-			flex-wrap: nowrap;
-			max-width: 26rem;
-		}
-		.vote-call--corner h2 {
-			font-size: 1rem;
-		}
-		.vote-call--corner > div {
-			min-width: 0;
-		}
-	}
-	@media (min-width: 900px) {
-		.vote-call--corner {
-			position: absolute;
-			top: 1rem;
-			right: 1rem;
-			width: 13rem;
-			flex-direction: column;
-			align-items: stretch;
-			text-align: center;
-			background: radial-gradient(ellipse 100% 60% at 50% 0%, var(--event-glow), transparent 70%), var(--bg-card);
-		}
-		.vote-call--corner h2 {
-			text-align: center;
-		}
-		.vote-call--corner a {
-			justify-content: center;
-		}
-	}
 
 	/* Score Breakdown */
 	.score-breakdown {
@@ -1356,32 +1162,7 @@
 		color: var(--text-primary);
 		letter-spacing: -0.01em;
 	}
-
-	.sort-control {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.75rem;
-		color: var(--text-muted);
-	}
-
-	.sort-control select {
-		background: var(--bg-card);
-		border: 1px solid var(--border-card);
-		color: var(--text-primary);
-		font-family: var(--font-family);
-		font-size: 0.75rem;
-		padding: 0.25rem 0.5rem;
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-	}
 	/* A finger needs more than a mouse. */
-	@media (pointer: coarse) {
-		.sort-control select {
-			min-height: 2.5rem;
-			padding: 0.25rem 0.75rem;
-		}
-	}
 
 	/* Items List */
 	.items-list {
@@ -1717,13 +1498,6 @@
 		height: 12px;
 		width: 40%;
 	}
-
-	.hero-gauge {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.6rem;
-	}
 	/* Before the phone rules below: a rule of the same specificity written
 	   after the media query would win over the phone's narrower width. */
 	.stance-gauge {
@@ -1741,15 +1515,6 @@
 	}
 
 	@media (max-width: 640px) {
-		/* The labels fit their box on a phone. */
-		.stat {
-			padding: 0.6rem 0.25rem;
-		}
-		.stat dt {
-			font-size: 0.56rem;
-			letter-spacing: 0;
-		}
-
 		/* A phone: the dial sits small beside the title, the summary and the
 		   meta take the whole width under them. The main block dissolves into
 		   the grid so its children can be placed. */
@@ -1812,12 +1577,6 @@
 		box-shadow: 0 0 0 3px var(--accent-glow);
 		border-color: var(--accent);
 		transition: box-shadow 0.6s ease;
-	}
-	.feed-link {
-		color: var(--accent-hover);
-		white-space: nowrap;
-		font-size: 0.875rem;
-		font-weight: 600;
 	}
 	/* ================= The new look of the page ================= */
 	.detail-page {

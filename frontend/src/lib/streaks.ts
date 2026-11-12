@@ -1,5 +1,5 @@
 // The days without a contradiction of each candidate: how long ago their
-// latest contradiction was (`last_contradiction_at` of GET /api/person/{id}:
+// latest contradiction was (`last_contradiction_at` of GET /api/persons:
 // the latest dated fact among their contradictions). The longest first. A
 // candidate without a contradiction has no streak: nothing started it.
 import { API_BASE } from '$lib/config';
@@ -21,23 +21,10 @@ export async function loadCandidates(): Promise<PersonSummary[]> {
 	return ((await res.json()) as PersonSummary[]) ?? [];
 }
 
-export async function loadStreaks(candidates: PersonSummary[], lang: string): Promise<Streak[]> {
-	const withOne = candidates.filter((p) => p.contradiction_count > 0);
-	const full = await Promise.all(
-		withOne.map(async (p) => {
-			try {
-				const res = await fetch(`${API_BASE}/api/person/${p.slug}`);
-				if (!res.ok) throw new Error(`HTTP ${res.status}`);
-				return (await res.json()) as PersonSummary;
-			} catch (err) {
-				console.error('failed to load the last contradiction of', p.slug, err);
-				return null;
-			}
-		})
-	);
+export function streaksOf(candidates: PersonSummary[], lang: string): Streak[] {
 	const out: Streak[] = [];
-	for (const p of full) {
-		if (!p?.last_contradiction_at) continue;
+	for (const p of candidates) {
+		if (!p.last_contradiction_at) continue;
 		const precision = p.last_contradiction_precision;
 		out.push({
 			person: p,

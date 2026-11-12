@@ -209,10 +209,6 @@
 		width: 20px;
 		height: 20px;
 	}
-	.small {
-		font-size: 0.8rem;
-		line-height: 1.5;
-	}
 	.signin {
 		margin: auto;
 		/* dvh: the height left under the browser's bars on a phone. */

@@ -8,7 +8,7 @@
 	import { API_BASE } from '$lib/config';
 	import { personPath } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
-	import { loadStreaks, type Streak } from '$lib/streaks';
+	import { streaksOf } from '$lib/streaks';
 	import { displayName } from '$lib/share';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -43,16 +43,7 @@
 		setFilter(w === 'party' ? 'party' : w === 'all' ? 'human' : '');
 	}
 	// The days without a contradiction of each candidate, the longest first.
-	let streaks: Streak[] = $state([]);
-	let streaksFor = '';
-	$effect(() => {
-		const key = candidates.map((p) => p.id).join(',') + currentLang;
-		if (candidates.length === 0 || key === streaksFor) return;
-		streaksFor = key;
-		loadStreaks(candidates, currentLang)
-			.then((v) => (streaks = v))
-			.catch((err) => console.error('failed to load the days without a contradiction', err));
-	});
+	let streaks = $derived(streaksOf(persons, currentLang));
 	// The candidates' cards in the order of the score (as the API gives
 	// them) or of the days without a contradiction, the longest first; a
 	// candidate without a contradiction has no counter and comes last.
@@ -438,16 +429,6 @@
 	.retry-btn:hover {
 		opacity: 0.9;
 	}
-
-	/* Controls */
-	.controls {
-		display: flex;
-		gap: 1rem;
-		margin-bottom: 1.5rem;
-		flex-wrap: wrap;
-		align-items: center;
-	}
-
 	.search-wrapper {
 		position: relative;
 		flex: 1;
@@ -484,39 +465,6 @@
 	.search-input::placeholder {
 		color: var(--text-muted);
 	}
-
-	.filter-pills {
-		display: inline-flex;
-		gap: 0;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-full);
-		padding: 0.25rem;
-	}
-
-	.pill {
-		background: transparent;
-		color: var(--text-secondary);
-		border: none;
-		padding: 0.5rem 1.1rem;
-		border-radius: var(--radius-full);
-		font-size: 0.875rem;
-		font-weight: 600;
-		font-family: var(--font-family);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.pill:hover {
-		color: var(--text-primary);
-	}
-
-	.pill.active {
-		background: var(--accent);
-		color: white;
-		box-shadow: 0 0 12px var(--accent-glow);
-	}
-
 	.podium-wrap {
 		margin-bottom: 2rem;
 	}

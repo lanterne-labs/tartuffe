@@ -542,23 +542,6 @@
 		background: var(--bg-card);
 		box-shadow: var(--shadow-card);
 	}
-	.podium-head {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-	.podium-head h2 {
-		font-size: 1.2rem;
-		font-weight: 700;
-		letter-spacing: -0.02em;
-	}
-	.podium-head span {
-		font-size: 0.84rem;
-		color: var(--text-muted);
-	}
-
 	/* ---------- The score, in a few lines ---------- */
 	.method {
 		display: grid;
