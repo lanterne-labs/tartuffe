@@ -1,6 +1,7 @@
 package xbot
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 
@@ -27,4 +28,16 @@ func QuoteTarget(c *storage.BotContradiction, handles []string) (id, link string
 		}
 	}
 	return "", ""
+}
+
+// ErrQuoteRefused is the error of a Poster when X refuses the quote and not
+// the tweet: since late 2026 the API lets an app quote only the posts that
+// mention its account or are its own ("You can only reply to or quote posts
+// where you are mentioned or are the author", 2026-11-12, the first quote
+// the bot tried). The bot then posts the tweet without the quote.
+var ErrQuoteRefused = errors.New("X refused the quote")
+
+// quoteRefused reports whether the body of a 403 refuses the quote.
+func quoteRefused(body string) bool {
+	return strings.Contains(body, "reply to or quote posts")
 }

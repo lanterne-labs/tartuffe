@@ -3,6 +3,7 @@ package xbot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,9 +52,15 @@ func (f *fakeTelegram) last(method string) map[string]any {
 	return nil
 }
 
-type fakePoster struct{ posted, quoted []string }
+type fakePoster struct {
+	posted, quoted []string
+	refuseQuotes   bool // as X does to an app the post does not mention
+}
 
 func (p *fakePoster) Post(_ context.Context, text, quote string) (string, error) {
+	if p.refuseQuotes && quote != "" {
+		return "", fmt.Errorf("post tweet: status 403: %w", ErrQuoteRefused)
+	}
 	p.posted = append(p.posted, text)
 	p.quoted = append(p.quoted, quote)
 	return "99", nil
@@ -321,6 +328,26 @@ func TestBotVoteTags(t *testing.T) {
 	assert.Equal(t, 2, tagged)
 }
 
+// TestBotQuoteRefused: when X refuses the quote, the tweet goes out without
+// it; without XBOT_QUOTE the bot quotes nothing.
+func TestBotQuoteRefused(t *testing.T) {
+	for _, quote := range []bool{true, false} {
+		b, _, poster, pool := testBot(t)
+		ctx := context.Background()
+		b.Quote = quote
+		poster.refuseQuotes = true
+		_, err := pool.Exec(ctx, `UPDATE fact_sources SET source_url = 'https://x.com/jdupont/status/555' WHERE fact_id = 2`)
+		require.NoError(t, err)
+		require.NoError(t, b.Tick(ctx))
+		require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "p:1:1", MessageID: 1}))
+		b.Now = func() time.Time { return time.Date(2026, 11, 10, 12, 0, 0, 0, b.Zone) }
+		require.NoError(t, b.Tick(ctx))
+		require.Len(t, poster.posted, 1, "quote %v", quote)
+		assert.Empty(t, poster.quoted[0])
+		assert.Equal(t, "posted", postStatus(t, pool, 1))
+	}
+}
+
 // TestBotVoteRevise: a reply to a vote draft asks for other versions: the
 // writer gets the request, the draft and what may be said of the vote; the
 // new versions come with the link and buttons of their own; a version with a
@@ -374,6 +401,7 @@ func TestBotVoteTweet(t *testing.T) {
 		}
 		return &VoteState{Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 50, Counted: 301}, nil
 	}
+	b.Quote = true
 	_, err := pool.Exec(ctx, `UPDATE fact_sources SET source_url = 'https://x.com/jdupont/status/555' WHERE fact_id = 2`)
 	require.NoError(t, err)
 
