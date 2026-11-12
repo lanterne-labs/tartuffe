@@ -1,6 +1,7 @@
 package categorizer
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -221,6 +222,36 @@ Some trailing explanation text here`)
 		result := extractFirstJSON(input)
 		if string(result) != "[]" {
 			t.Errorf("expected '[]', got %q", string(result))
+		}
+	})
+
+	t.Run("a corrected array replaces the first one", func(t *testing.T) {
+		input := []byte(`[{"canonical_verb":"DECLARED","n":1}]
+
+Correction: the canonical_verb must be one of the allowed tokens. Corrected output:
+
+[
+  {"canonical_verb":"CLAIMED","n":1}
+]`)
+		result := extractFirstJSON(input)
+		if !strings.Contains(string(result), "CLAIMED") || strings.Contains(string(result), "DECLARED") {
+			t.Errorf("expected the corrected array, got %q", string(result))
+		}
+	})
+
+	t.Run("a corrected empty array replaces a placeholder", func(t *testing.T) {
+		input := []byte(`[{"normalized_fact":""}]
+Correction: the array above holds a placeholder entry. The correct output is:
+[]`)
+		if result := extractFirstJSON(input); string(result) != "[]" {
+			t.Errorf("expected '[]', got %q", string(result))
+		}
+	})
+
+	t.Run("a bracket in the trailing prose is not an answer", func(t *testing.T) {
+		input := []byte(`[{"key":"value"}] See note [2] and ["a"].`)
+		if result := extractFirstJSON(input); string(result) != `[{"key":"value"}]` {
+			t.Errorf("expected the first array, got %q", string(result))
 		}
 	})
 

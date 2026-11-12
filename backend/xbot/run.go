@@ -33,6 +33,9 @@ type Bot struct {
 	Store    *storage.PostgresStorer
 	Writer   Writer
 	Telegram *Telegram
+	// waitingSlot is the slot whose draft waits for the LLM: its warning is
+	// logged once, not every minute.
+	waitingSlot time.Time
 	// Poster is nil without the X keys: approved tweets then wait.
 	Poster Poster
 	// Silence reports whether the electoral silence holds at t (the eve and
@@ -121,15 +124,29 @@ func parseSlots(name, list string) ([]Clock, error) {
 // come, the slots every minute.
 func (b *Bot) Run(ctx context.Context) {
 	go func() {
+		failures := 0
 		for ctx.Err() == nil {
 			updates, err := b.Telegram.Updates(ctx, 50*time.Second)
 			if err != nil {
 				if ctx.Err() == nil {
-					log.Warn().Err(err).Msg("xbot: reading Telegram failed; retrying")
+					failures++
+					// One line at the first failure, then one every 30 (about 5 min):
+					// on 2026-11-11 another reader of the same bot ("Conflict:
+					// terminated by other getUpdates request") made this fail every
+					// 13 s for 4 h 30, the taps on the drafts were lost and nobody knew.
+					if failures == 1 || failures%30 == 0 {
+						log.Warn().Err(err).Int("consecutive", failures).Msg("xbot: reading Telegram failed; retrying")
+					}
+					if failures == 30 {
+						if _, sendErr := b.Telegram.Send(ctx, "⚠️ Le bot ne lit plus ce canal depuis 5 minutes : les boutons et les réponses sont peut-être perdus.\n<code>"+html.EscapeString(err.Error())+"</code>", nil); sendErr != nil {
+							log.Error().Err(sendErr).Msg("xbot: could not send the Telegram reading alert")
+						}
+					}
 					sleep(ctx, 10*time.Second)
 				}
 				continue
 			}
+			failures = 0
 			for _, u := range updates {
 				if err := b.Handle(ctx, u); err != nil {
 					log.Error().Err(err).Str("data", u.Data).Msg("xbot: handling a Telegram update failed")
@@ -213,7 +230,10 @@ func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, draf
 		}
 		if err := draft(ctx, slot); err != nil {
 			if errors.Is(err, llm.ErrUnavailable) {
-				log.Warn().Err(err).Time("slot", slot).Msg("xbot: LLM unavailable; the draft waits for the next tick")
+				if !b.waitingSlot.Equal(slot) {
+					b.waitingSlot = slot
+					log.Warn().Err(err).Time("slot", slot).Msg("xbot: LLM unavailable; the draft is tried again every tick until its slot")
+				}
 				break
 			}
 			return fmt.Errorf("draft for %s: %w", slot, err)

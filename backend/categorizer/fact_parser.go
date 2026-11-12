@@ -8,6 +8,7 @@ import (
 	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"time"
@@ -185,7 +186,7 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 			NormalizedFactTextEn: rawFact.NormalizedFactEn,                              // English translation (empty if source is English)
 			Lang:                 rawFact.Lang,                                          // BCP-47 source language
 			EmbeddingText:        rawFact.EmbeddingText,                                 // Name-free version for embeddings
-			OriginalQuote:        rawFact.OriginalQuote,                                 // Map to correct field
+			OriginalQuote:        html.UnescapeString(rawFact.OriginalQuote),            // Map to correct field
 			CanonicalVerb:        rawFact.CanonicalVerb,
 			InvolvedPeople:       rawFact.InvolvedPeople, // Secondary people mentioned
 			SourceURL:            sourceURL,              // Add context passed from extractor
@@ -300,18 +301,58 @@ func parseFlexibleISO(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// extractFirstJSON uses json.Decoder to extract the first complete JSON value
-// from data, discarding any trailing text the LLM may have appended.
+// extractFirstJSON returns the JSON value of data the model settled on,
+// discarding the text around it. That is the first complete value, unless the
+// text after it holds a later array of facts: the model then corrected itself
+// ("Correction: the canonical_verb must be one of the allowed tokens.
+// Corrected output: [...]") and the last array is its answer. Keeping the
+// first one stored the answer the model withdrew: a fact with a verb outside
+// the enum was dropped although the corrected array held it (2026-11-11).
 func extractFirstJSON(data []byte) []byte {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	var raw json.RawMessage
 	if err := dec.Decode(&raw); err != nil {
 		return data // let downstream error handling deal with it
 	}
-	// If there was trailing content, log a warning
-	if dec.More() || dec.InputOffset() < int64(len(bytes.TrimSpace(data))) {
-		log.Warn().Str("trailing_text", strings.TrimSpace(string(data[dec.InputOffset():]))).
-			Msg("Stripped trailing text from LLM JSON response")
+	rest := data[dec.InputOffset():]
+	if len(bytes.TrimSpace(rest)) == 0 {
+		return raw
 	}
+	msg := "Stripped trailing text from LLM JSON response"
+	if corrected, ok := lastFactArray(rest); ok && len(raw) > 0 && raw[0] == '[' {
+		raw = corrected
+		msg = "LLM corrected its JSON response; keeping the last array"
+	}
+	log.Warn().Str("trailing_text", util.TruncateString(strings.TrimSpace(string(rest)), 400)).Msg(msg)
 	return raw
+}
+
+// lastFactArray returns the last JSON array in text whose elements are all
+// objects (an empty array counts: "the correct output is: []"). An array of
+// anything else ("see [2]") is prose, not an answer.
+func lastFactArray(text []byte) (json.RawMessage, bool) {
+	var last json.RawMessage
+	for i := 0; i < len(text); i++ {
+		if text[i] != '[' {
+			continue
+		}
+		dec := json.NewDecoder(bytes.NewReader(text[i:]))
+		var items []json.RawMessage
+		if err := dec.Decode(&items); err != nil {
+			continue
+		}
+		objects := true
+		for _, it := range items {
+			if t := bytes.TrimSpace(it); len(t) == 0 || t[0] != '{' {
+				objects = false
+				break
+			}
+		}
+		end := i + int(dec.InputOffset())
+		if objects {
+			last = json.RawMessage(bytes.TrimSpace(text[i:end]))
+		}
+		i = end - 1
+	}
+	return last, last != nil
 }
