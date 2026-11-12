@@ -53,6 +53,16 @@
 			.then((v) => (streaks = v))
 			.catch((err) => console.error('failed to load the days without a contradiction', err));
 	});
+	// The candidates' cards in the order of the score (as the API gives
+	// them) or of the days without a contradiction, the longest first; a
+	// candidate without a contradiction has no counter and comes last.
+	let order = $state<'score' | 'streak'>('score');
+	let streakOf = $derived(new Map(streaks.map((s) => [s.person.id, s])));
+	let shown = $derived(
+		order === 'score'
+			? persons
+			: [...persons].sort((a, b) => (streakOf.get(b.id)?.days ?? -1) - (streakOf.get(a.id)?.days ?? -1))
+	);
 	function lastDate(iso: string): string {
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 	}
@@ -163,6 +173,8 @@
 	let unsubscribe: (() => void) | null = null;
 
 	onMount(() => {
+		// The feed's "all the counters" link opens the cards by counter.
+		if (location.hash === '#streaks') order = 'streak';
 		loadPersons();
 		loadOthers();
 		loadPanels();
@@ -224,32 +236,6 @@
 	{#if who === 'candidates'}
 	<div class="podium-wrap"><Podium bind:this={podium} lang={currentLang} /></div>
 
-	{#if streaks.length > 0}
-		<section class="streak-section" id="streaks">
-			<header class="section-header">
-				<h2 class="section-title">{tr('streak.title', currentLang)}</h2>
-				<p class="section-sub">{tr('streak.sub', currentLang)}</p>
-			</header>
-			<ol class="streak-grid">
-				{#each streaks as s, i (s.person.id)}
-					<li>
-						<a href={personPath(s.person.slug)} class="streak" class:lead={i === 0}>
-							<span class="streak-rank">{i + 1}</span>
-							{#if s.person.image_url}<img src={s.person.image_url} alt="" loading="lazy" />{:else}<span class="streak-ini">{s.person.name.charAt(0).toUpperCase()}</span>{/if}
-							<span class="streak-who">
-								<strong>{displayName(s.person.name)}</strong>
-								<small>{tr('streak.last_short', currentLang)} : {s.since || lastDate(s.person.last_contradiction_at ?? '')}</small>
-							</span>
-							{#if !s.since}
-								<span class="streak-days">{s.days.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR')}<small>{tr('streak.unit', currentLang)}</small></span>
-							{/if}
-						</a>
-					</li>
-				{/each}
-			</ol>
-		</section>
-	{/if}
-
 	{#if candidates.length > 1}
 		<section class="lineup-section">
 			<h2 class="section-title">{tr('score.compare.title', currentLang)}</h2>
@@ -257,9 +243,13 @@
 		</section>
 	{/if}
 
-	<header class="section-header">
+	<header class="section-header" id="streaks">
 		<h2 class="section-title">{tr('home.candidates', currentLang)}</h2>
 		<p class="section-sub">{tr('home.candidates_sub', currentLang)}</p>
+		<div class="tabs order" role="tablist">
+			<button role="tab" class:on={order === 'score'} aria-selected={order === 'score'} onclick={() => (order = 'score')}>{tr('rank.order.score', currentLang)}</button>
+			<button role="tab" class:on={order === 'streak'} aria-selected={order === 'streak'} onclick={() => (order = 'streak')}>{tr('streak.title', currentLang)}</button>
+		</div>
 	</header>
 
 	{#if loading && persons.length === 0}
@@ -279,7 +269,8 @@
 		</div>
 	{:else}
 		<div class="persons-grid">
-			{#each persons as person (person.id)}
+			{#each shown as person (person.id)}
+				{@const st = streakOf.get(person.id)}
 				<a href={personPath(person.slug)} class="card">
 					<div class="card-content">
 						<div class="card-left">
@@ -296,6 +287,18 @@
 								</div>
 							</div>
 						</div>
+						<!-- The days since their latest contradiction; the date itself when
+						     only its month or year is known. -->
+						{#if st}
+							<div class="card-streak" title="{tr('streak.last', currentLang)} : {st.since || lastDate(st.person.last_contradiction_at ?? '')}">
+								{#if st.since}
+									<span class="since">{st.since}</span>
+								{:else}
+									<span class="days">{st.days.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR')}<small>{tr('streak.unit', currentLang)}</small></span>
+								{/if}
+								<span class="cap">{tr('streak.cap', currentLang)}</span>
+							</div>
+						{/if}
 					</div>
 				</a>
 			{/each}
@@ -753,89 +756,53 @@
 		padding-top: 0;
 		border-top: 0;
 	}
-	/* ---------- The days without a contradiction ---------- */
-	.streak-section {
-		margin-bottom: 3rem;
+	/* ---------- The days without a contradiction, on a candidate's card ---------- */
+	.section-header {
 		scroll-margin-top: 6rem;
 	}
-	.streak-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
-		gap: 0.7rem;
-		list-style: none;
-	}
-	.streak {
+	.order {
 		display: flex;
-		align-items: center;
-		gap: 0.8rem;
-		padding: 0.8rem 1rem;
-		border-radius: var(--radius-lg);
-		border: 1px solid var(--border-card);
-		background: var(--bg-card);
-		color: var(--text-primary);
-		transition: border-color 0.2s, transform 0.25s var(--ease), background 0.2s;
+		width: fit-content;
+		margin: 0.9rem auto 0;
 	}
-	.streak:hover {
-		border-color: rgba(242, 182, 64, 0.35);
-		background: var(--bg-card-hover);
-		transform: translateY(-2px);
-		color: var(--text-primary);
-	}
-	.streak.lead {
-		border-color: rgba(242, 182, 64, 0.3);
-		background: radial-gradient(90% 140% at 0% 50%, rgba(242, 182, 64, 0.14), transparent 65%), var(--bg-card);
-	}
-	.streak-rank {
-		width: 1.4rem;
-		font-family: var(--font-num);
-		font-weight: 800;
-		font-size: 1.3rem;
-		color: var(--text-muted);
-		text-align: center;
-	}
-	.streak img,
-	.streak-ini {
-		width: 3.2rem;
-		height: 3.2rem;
-		border-radius: 50%;
-		object-fit: cover;
+	.card-streak {
 		flex-shrink: 0;
-	}
-	.streak-ini {
 		display: grid;
-		place-items: center;
-		background: var(--bg-elevated);
-		font-weight: 700;
+		justify-items: end;
+		gap: 0.15rem;
+		text-align: right;
 	}
-	.streak-who {
-		text-align: left;
-		flex: 1;
-		min-width: 0;
-		display: grid;
-		gap: 0.1rem;
-	}
-	.streak-who strong {
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.streak-who small {
-		font-size: 0.78rem;
-		color: var(--text-muted);
-	}
-	.streak-days {
+	.card-streak .days {
 		font-family: var(--font-num);
 		font-weight: 800;
-		font-size: 2.2rem;
+		font-size: 2rem;
 		line-height: 1;
 		color: var(--gold);
 		white-space: nowrap;
 	}
-	.streak-days small {
-		margin-left: 0.15rem;
+	.card-streak .days small {
+		margin-left: 0.12rem;
 		font-family: var(--font-family);
-		font-size: 0.8rem;
+		font-size: 0.75rem;
 		font-weight: 500;
 		color: var(--text-muted);
+	}
+	.card-streak .since {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--gold);
+	}
+	.card-streak .cap {
+		max-width: 6.5rem;
+		font-size: 0.68rem;
+		line-height: 1.2;
+		color: var(--text-muted);
+	}
+	/* The name keeps its two words beside the counter: it wraps, never cut. */
+	.card-name .name-text {
+		white-space: normal;
+		overflow: visible;
+		text-overflow: clip;
+		line-height: 1.2;
 	}
 </style>

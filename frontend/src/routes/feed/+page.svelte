@@ -271,42 +271,6 @@
 </svelte:head>
 
 <div class="feed-grid">
-<aside class="side" aria-label={tr('feed.side', currentLang)}>
-	{#if streaks.length > 0}
-		<div class="side-card">
-			<h2>{tr('streak.title', currentLang)}</h2>
-			<ul class="streaks">
-				{#each streaks.slice(0, 6) as s (s.person.id)}
-					<li>
-						<a href={personPath(s.person.slug)}>
-							{#if s.person.image_url}<img src={s.person.image_url} alt="" loading="lazy" />{:else}<span class="ini">{s.person.name.charAt(0).toUpperCase()}</span>{/if}
-							<span class="streak-name">{displayName(s.person.name)}</span>
-							{#if s.since}
-								<span class="streak-since">{s.since}</span>
-							{:else}
-								<span class="streak-days" class:fresh-day={s.days < 1}>{s.days}<small> {tr('streak.unit', currentLang)}</small></span>
-							{/if}
-						</a>
-					</li>
-				{/each}
-			</ul>
-			<a class="side-link" href="/dashboard#streaks">{tr('streak.all', currentLang)}</a>
-		</div>
-	{/if}
-	{#if pick}
-		<a class="side-card side-pick" href={sharePath('contradiction', pick.item.id, pick.item.person.slug)}>
-			<h2>{tr(pick.backed ? 'feed.side.backed' : 'feed.side.pick', currentLang)}</h2>
-			<p class="pick-text">{clip(whyOf(pick.item, currentLang) || pickLang(pick.item.fact.text, pick.item.fact.text_en, currentLang), 220)}</p>
-			<p class="pick-who">{displayName(pick.item.person.name)}{#if pick.backed} · {pick.item.likes} +1{/if}</p>
-		</a>
-	{/if}
-	{#if !$session}
-		<div class="side-card side-signin">
-			<p>{tr('feed.side.signin', currentLang)}</p>
-			<button class="pill-btn pill-btn--ghost pill-btn--sm" onclick={() => signInOpen.set(true)}>{tr('auth.title', currentLang)}</button>
-		</div>
-	{/if}
-</aside>
 <div class="feed">
 	<header class="feed-head">
 		<div>
@@ -540,6 +504,42 @@
 		{/if}
 	{/if}
 </div>
+<aside class="side" aria-label={tr('feed.side', currentLang)}>
+	{#if streaks.length > 0}
+		<div class="side-card">
+			<h2>{tr('streak.title', currentLang)}</h2>
+			<ul class="streaks">
+				{#each streaks.slice(0, 6) as s (s.person.id)}
+					<li>
+						<a href={personPath(s.person.slug)}>
+							{#if s.person.image_url}<img src={s.person.image_url} alt="" loading="lazy" />{:else}<span class="ini">{s.person.name.charAt(0).toUpperCase()}</span>{/if}
+							<span class="streak-name">{displayName(s.person.name)}</span>
+							{#if s.since}
+								<span class="streak-since">{s.since}</span>
+							{:else}
+								<span class="streak-days" class:fresh-day={s.days < 1}>{s.days}<small> {tr('streak.unit', currentLang)}</small></span>
+							{/if}
+						</a>
+					</li>
+				{/each}
+			</ul>
+			<a class="side-link" href="/dashboard#streaks">{tr('streak.all', currentLang)}</a>
+		</div>
+	{/if}
+	{#if pick}
+		<a class="side-card side-pick" href={sharePath('contradiction', pick.item.id, pick.item.person.slug)}>
+			<h2>{tr(pick.backed ? 'feed.side.backed' : 'feed.side.pick', currentLang)}</h2>
+			<p class="pick-text">{clip(whyOf(pick.item, currentLang) || pickLang(pick.item.fact.text, pick.item.fact.text_en, currentLang), 220)}</p>
+			<p class="pick-who">{displayName(pick.item.person.name)}{#if pick.backed} · {pick.item.likes} +1{/if}</p>
+		</a>
+	{/if}
+	{#if !$session}
+		<div class="side-card side-signin">
+			<p>{tr('feed.side.signin', currentLang)}</p>
+			<button class="pill-btn pill-btn--ghost pill-btn--sm" onclick={() => signInOpen.set(true)}>{tr('auth.title', currentLang)}</button>
+		</div>
+	{/if}
+</aside>
 </div>
 
 <style>
@@ -1058,7 +1058,7 @@
 	/* ---------- The layout of a social feed: a column beside the list ---------- */
 	.feed-grid {
 		display: grid;
-		grid-template-columns: 19rem minmax(0, 44rem);
+		grid-template-columns: minmax(0, 44rem) 19rem;
 		justify-content: center;
 		gap: 2rem;
 		align-items: start;
