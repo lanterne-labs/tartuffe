@@ -60,7 +60,11 @@ type Bot struct {
 	// the tweet (X bills a tweet with a link more).
 	Site string
 	Link bool
-	Now  func() time.Time
+	// Quote posts a tweet as a quote of the person's own tweet when a fact
+	// comes from one (QuoteTarget). Off by default: X refuses it to an app
+	// the post does not mention (ErrQuoteRefused).
+	Quote bool
+	Now   func() time.Time
 }
 
 // Config is the bot's settings from the environment: XBOT_SLOTS (default
@@ -96,6 +100,7 @@ func (b *Bot) Config() error {
 		}
 	}
 	b.Link, _ = strconv.ParseBool(os.Getenv("XBOT_LINK"))
+	b.Quote, _ = strconv.ParseBool(os.Getenv("XBOT_QUOTE"))
 	b.Site = os.Getenv("XBOT_SITE")
 	if b.Site == "" {
 		b.Site = "https://tartuffe.me"
@@ -307,8 +312,10 @@ func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 			continue
 		}
 		var quote *string
-		if d.QuoteID, d.QuoteLink = QuoteTarget(c, pool.Person); d.QuoteID != "" {
-			quote = &d.QuoteID
+		if b.Quote {
+			if d.QuoteID, d.QuoteLink = QuoteTarget(c, pool.Person); d.QuoteID != "" {
+				quote = &d.QuoteID
+			}
 		}
 		cid := c.ID
 		at := b.postAt(slot)
@@ -642,6 +649,10 @@ func (b *Bot) PostDue(ctx context.Context) error {
 			quote = *p.QuoteTweetID
 		}
 		id, err := b.Poster.Post(ctx, *p.Chosen, quote)
+		if errors.Is(err, ErrQuoteRefused) {
+			log.Warn().Err(err).Int64("post", p.ID).Msg("xbot: X refused the quote; posting the tweet without it")
+			id, err = b.Poster.Post(ctx, *p.Chosen, "")
+		}
 		if err != nil {
 			log.Error().Err(err).Int64("post", p.ID).Msg("xbot: posting failed")
 			if merr := b.Store.MarkXPostFailed(ctx, p.ID, err.Error()); merr != nil {

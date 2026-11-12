@@ -153,6 +153,9 @@ func (p *OAuth2Poster) post(ctx context.Context, token, text, quote string) (str
 	if resp.StatusCode == http.StatusUnauthorized {
 		return "", fmt.Errorf("post tweet: status 401: %s: %w", strings.TrimSpace(string(raw)), errUnauthorized)
 	}
+	if resp.StatusCode == http.StatusForbidden && quote != "" && quoteRefused(string(raw)) {
+		return "", fmt.Errorf("post tweet: status 403: %s: %w", strings.TrimSpace(string(raw)), ErrQuoteRefused)
+	}
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("post tweet: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}

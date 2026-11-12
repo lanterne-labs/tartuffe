@@ -128,6 +128,9 @@ func (p *XAPIPoster) Post(ctx context.Context, text, quote string) (string, erro
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusForbidden && quote != "" && quoteRefused(string(raw)) {
+		return "", fmt.Errorf("post tweet: status 403: %s: %w", strings.TrimSpace(string(raw)), ErrQuoteRefused)
+	}
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("post tweet: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
