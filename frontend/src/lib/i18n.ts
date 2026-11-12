@@ -49,7 +49,7 @@ export function whyOf(
 const dict: Record<string, { fr: string; en: string }> = {
 	// Nav
 	'dashboard.title': { fr: 'Classement des candidats', en: 'Candidate ranking' },
-	'nav.dashboard': { fr: 'Tableau de bord', en: 'Dashboard' },
+	'nav.dashboard': { fr: 'Classement', en: 'Ranking' },
 
 	// Home / dashboard
 	'home.search_placeholder': { fr: 'Rechercher par nom…', en: 'Search by name…' },

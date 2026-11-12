@@ -329,7 +329,8 @@
 		.podium { gap: 0.25rem; }
 		.week { min-width: 9.5rem; }
 		.podium-section { padding: 1rem 0.5rem 0; }
-		.name { font-size: 0.8rem; }
+		/* Three steps share a phone's width: a long name takes two lines. */
+		.name { font-size: 0.8rem; white-space: normal; line-height: 1.2; }
 		.step--1 .name { font-size: 0.9rem; }
 		.meta { font-size: 0.7rem; }
 		/* The dials fit their column: the middle one a little larger. */

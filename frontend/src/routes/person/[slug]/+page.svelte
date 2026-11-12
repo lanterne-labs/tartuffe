@@ -1687,8 +1687,8 @@
 			padding: 0.6rem 0.25rem;
 		}
 		.stat dt {
-			font-size: 0.625rem;
-			letter-spacing: 0.03em;
+			font-size: 0.56rem;
+			letter-spacing: 0;
 		}
 
 		/* A phone: the dial sits small beside the title, the summary and the

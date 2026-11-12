@@ -1175,6 +1175,7 @@
 	}
 	/* A fact of the feed: a card that wakes under the pointer, as a contradiction. */
 	.item {
+		border-left: 1px solid var(--border-card);
 		border-radius: var(--radius-lg);
 		transition: border-color 0.2s, transform 0.25s var(--ease), background 0.2s;
 	}

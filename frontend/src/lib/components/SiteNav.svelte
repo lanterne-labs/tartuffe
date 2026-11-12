@@ -397,7 +397,7 @@
 		padding: 0.35rem;
 		border: 1px solid var(--border-card-hover);
 		border-radius: 0.9rem;
-		background: rgba(36, 28, 43, 0.97);
+		background: #241c2b;
 		box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.7);
 		opacity: 0;
 		visibility: hidden;
@@ -566,6 +566,10 @@
 		cursor: pointer;
 	}
 	.nav-burger svg {
+		/* A tap goes to the button, never to a line of the icon: the lines are
+		   redrawn when the menu opens, and a click whose target left the page
+		   reads as a click outside, which closes the menu at once. */
+		pointer-events: none;
 		width: 1.4rem;
 		height: 1.4rem;
 		fill: none;

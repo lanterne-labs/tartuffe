@@ -716,6 +716,13 @@
 		.duo {
 			grid-template-columns: 1fr;
 		}
+		/* The podium needs the whole width of a phone for its three names. */
+		.podium-card {
+			padding: 0;
+			border: 0;
+			background: none;
+			box-shadow: none;
+		}
 		.block {
 			margin-top: 3rem;
 		}
