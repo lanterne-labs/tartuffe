@@ -440,9 +440,15 @@
 	// The period the person's statements were collected over, month to month.
 	let collected = $derived.by(() => {
 		if (!person?.collected_from || !person?.collected_to) return '';
-		const month = (d: string) => new Date(d).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { month: 'long', year: 'numeric' });
-		return tr('person.collected', currentLang, { from: month(person.collected_from), to: month(person.collected_to) });
+		const month = (d: string) => new Date(d).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { month: 'short', year: 'numeric' }).replaceAll(' ', '\u00a0');
+		// A line breaks at the arrow, never inside a date.
+		return `${month(person.collected_from)} → ${month(person.collected_to)}`;
 	});
+
+	// A count as the reader's language writes it (4 929, 4,929).
+	function count(n: number): string {
+		return n.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR');
+	}
 
 	// How long since the person's latest statement or act that contradicts
 	// another of theirs: in days, or the date itself when only its month or
@@ -452,12 +458,12 @@
 		if (!iso) return '';
 		const precision = person?.last_contradiction_precision;
 		if (precision === 'year' || precision === 'month') {
-			return tr('person.last_contradiction_date', currentLang, { date: statementDateText(iso, precision, currentLang) });
+			return statementDateText(iso, precision, currentLang);
 		}
 		const days = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
 		if (days === 0) return tr('person.last_contradiction_today', currentLang);
 		if (days === 1) return tr('person.last_contradiction_day', currentLang);
-		return tr('person.last_contradiction_days', currentLang, { n: days.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') });
+		return tr('person.last_contradiction_days', currentLang, { n: count(days) });
 	});
 
 	function formatDate(dateString: string): string {
@@ -562,26 +568,48 @@
 							<span class="badge">{tr('person.party_badge', currentLang)}</span>
 						{/if}
 					</h1>
-					{#if scored}
-					<p class="hero-summary">
-						<!-- The dot is glued to what follows it: a line may break before a
-						     dot, never after one, so no line ends on a lone "·". -->
-						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
-						<span class="dot">·</span>&nbsp;{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
-						<span class="dot">·</span>&nbsp;<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
-					</p>
-					{#if collected}<p class="hero-summary">{collected}</p>{/if}
-					{#if lastContradiction}<p class="hero-summary" title={tr('person.last_contradiction_hint', currentLang)}>{lastContradiction}</p>{/if}
+				</div>
+			</div>
+			<!-- The record in boxes, each with its label, always in the same
+			     place: the counts on the first row, the dates on the second. -->
+			<dl class="hero-stats">
+				<div class="stat">
+					<dd>{count(person.fact_count)}</dd>
+					<dt>{tr('person.stat.facts', currentLang)}</dt>
+				</div>
+				{#if scored}
+					<div class="stat">
+						<dd>{count(person.stance_count)}</dd>
+						<dt>{tr('person.stat.stances', currentLang)}</dt>
+					</div>
+					<div class="stat">
+						<dd>{count(person.contradiction_count)}</dd>
+						<dt>{tr('person.stat.contradictions', currentLang)}</dt>
+					</div>
+				{/if}
+				{#if collected}
+					<div class="stat stat--wide">
+						<dd>{collected}</dd>
+						<dt>{tr('person.stat.period', currentLang)}</dt>
+					</div>
+				{/if}
+				{#if scored && lastContradiction}
+					<div class="stat stat--wide" title={tr('person.last_contradiction_hint', currentLang)}>
+						<dd>{lastContradiction}</dd>
+						<dt>{tr('person.stat.last', currentLang)}</dt>
+					</div>
+				{/if}
+			</dl>
+			<div class="hero-foot">
+				{#if scored}
+					<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					{#if !person.candidate}
 						<p class="hero-note">{tr('person.detection_paused_note', currentLang)}</p>
 					{/if}
 					<p class="hero-note">{tr('person.ai_note', currentLang)} <a href="/about">{tr('person.ai_note_link', currentLang)}</a></p>
-					{:else}
-						<p class="hero-summary">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</p>
-						{#if collected}<p class="hero-summary">{collected}</p>{/if}
-						<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>
-					{/if}
-				</div>
+				{:else}
+					<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>
+				{/if}
 			</div>
 			<div class="hero-gauge">
 				<ShareMenu label item={{ kind: 'person', id: person.id, personSlug: person.slug, personName: person.name, score: scored ? person.honesty_score : undefined }} />
@@ -910,26 +938,77 @@
 		text-transform: capitalize;
 	}
 
-		.hero-note {
-		color: var(--text-secondary);
-		font-size: 0.8125rem;
-		margin-top: 0.5rem;
-		max-width: 60ch;
+	/* The boxes of the record: a value over its label. Three counts on the
+	   first row, the two dates on the second. */
+	.hero-stats {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.5rem;
+		width: 100%;
+		max-width: 34rem;
+		margin: 0;
 	}
 
-	.hero-summary {
+	.stat {
+		flex: 1 1 calc(33.333% - 0.5rem);
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.2rem;
+		padding: 0.65rem 0.5rem;
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-md);
+		background: var(--bg-card-hover);
+		text-align: center;
+	}
+
+	.stat--wide {
+		flex-basis: calc(50% - 0.5rem);
+	}
+
+	.stat dd {
+		margin: 0;
+		font-size: 1.25rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		line-height: 1.2;
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.stat--wide dd {
+		font-size: 0.95rem;
+		font-weight: 600;
+	}
+
+	.stat dt {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
 		color: var(--text-muted);
-		font-size: 0.813rem;
-		margin-top: 0.25rem;
+	}
+
+	.hero-foot {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		text-align: center;
+	}
+
+	.hero-note {
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		max-width: 60ch;
+		margin: 0;
 	}
 
 	.dot {
 		margin: 0 0.25rem;
 		color: var(--text-muted);
-	}
-	/* The no-break space after the dot is its right margin. */
-	.hero-summary .dot {
-		margin-right: 0;
 	}
 
 	.muted {
@@ -1603,13 +1682,13 @@
 	}
 
 	@media (max-width: 640px) {
-		.person-hero {
-			flex-direction: column;
-			align-items: flex-start;
+		/* The labels fit their box on a phone. */
+		.stat {
+			padding: 0.6rem 0.25rem;
 		}
-
-		.hero-gauge {
-			align-self: center;
+		.stat dt {
+			font-size: 0.625rem;
+			letter-spacing: 0.03em;
 		}
 
 		/* A phone: the dial sits small beside the title, the summary and the
@@ -1678,5 +1757,7 @@
 	.feed-link {
 		color: var(--accent-hover);
 		white-space: nowrap;
+		font-size: 0.875rem;
+		font-weight: 600;
 	}
 </style>

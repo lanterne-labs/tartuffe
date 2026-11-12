@@ -9,7 +9,11 @@
 	//
 	// The arrows go back through the weeks: the API keeps the podium each
 	// past week ended on (GET /api/podium?week=), with the scores of then.
+	// A change of week slides: towards the past the podium leaves to the
+	// right and the older one comes from the left, as pages of a calendar.
 	import { onMount } from 'svelte';
+	import { fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import TartuffeScore from './TartuffeScore.svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
@@ -40,10 +44,24 @@
 		return tr('home.podium_week_of', lang, { day });
 	});
 
+	// The way the next podium comes from: -1 from the left (an older week),
+	// 1 from the right (a newer one), 0 without a slide (the first load, a
+	// refresh, a reader who asked for less motion).
+	let from = $state(0);
+	const SLIDE_MS = 380;
+
+	function go(week: string | null, direction: number) {
+		if (week === null) return;
+		const still = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		from = still ? 0 : direction;
+		show(week);
+	}
+
 	onMount(() => load());
 	// load reads the live podium again (the dashboard's refresh).
 	export async function load() {
 		seen.delete('');
+		from = 0;
 		await show('');
 	}
 
@@ -75,9 +93,9 @@
 		<p>{tr('home.podium_sub', lang)}</p>
 		{#if weeks.length > 1}
 			<nav class="weeks" aria-label={tr('home.podium_weeks', lang)}>
-				<button type="button" class="arrow" disabled={older === null || loading} onclick={() => older !== null && show(older)} aria-label={tr('home.podium_older', lang)}>‹</button>
+				<button type="button" class="arrow" disabled={older === null || loading} onclick={() => go(older, -1)} aria-label={tr('home.podium_older', lang)}>‹</button>
 				<span class="week" aria-live="polite">{weekLabel}</span>
-				<button type="button" class="arrow" disabled={newer === null || loading} onclick={() => newer !== null && show(newer)} aria-label={tr('home.podium_newer', lang)}>›</button>
+				<button type="button" class="arrow" disabled={newer === null || loading} onclick={() => go(newer, 1)} aria-label={tr('home.podium_newer', lang)}>›</button>
 			</nav>
 		{/if}
 	</header>
@@ -94,18 +112,24 @@
 	{:else if persons.length === 0}
 		<p class="empty">{tr('home.no_data', lang)}</p>
 	{:else}
-		<ol class="podium" class:fading={loading}>
-			{#each persons as person (person.id)}
-				<li class="step step--{person.rank}">
-					<a href={personPath(person.slug)} class="laureate">
-						<TartuffeScore honesty={person.honesty_score} {lang} size={person.rank === 1 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={true} />
-						<span class="name">{person.name}</span>
-						<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', lang)}</span>
-					</a>
-					<div class="block"><span class="pos">{person.rank}</span></div>
-				</li>
-			{/each}
-		</ol>
+		<!-- The two podiums of a slide share one cell: the one leaving and the
+		     one coming move side by side. -->
+		<div class="slides">
+			{#key podium?.live ? '' : podium?.week}
+				<ol class="podium" in:fly={{ x: `${from * 100}%`, duration: from ? SLIDE_MS : 0, easing: cubicOut, opacity: 1 }} out:fly={{ x: `${-from * 100}%`, duration: from ? SLIDE_MS : 0, easing: cubicOut, opacity: 1 }}>
+					{#each persons as person (person.id)}
+						<li class="step step--{person.rank}">
+							<a href={personPath(person.slug)} class="laureate">
+								<TartuffeScore honesty={person.honesty_score} {lang} size={person.rank === 1 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={true} />
+								<span class="name">{person.name}</span>
+								<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', lang)}</span>
+							</a>
+							<div class="block"><span class="pos">{person.rank}</span></div>
+						</li>
+					{/each}
+				</ol>
+			{/key}
+		</div>
 	{/if}
 </section>
 
@@ -184,8 +208,14 @@
 		cursor: default;
 	}
 
-	.podium.fading {
-		opacity: 0.5;
+	.slides {
+		display: grid;
+		align-items: end;
+	}
+
+	.slides > .podium {
+		grid-area: 1 / 1;
+		min-width: 0;
 	}
 
 	.podium {

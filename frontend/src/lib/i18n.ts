@@ -71,13 +71,17 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'home.sourced': { fr: 'Personnalités politiques suivies', en: 'Tracked political figures' },
 	'home.sourced_note': { fr: 'Leurs déclarations et votes sont collectés. La détection des contradictions tourne d’abord pour les candidats : ces personnalités ne sont pas classées.', en: 'Their statements and votes are collected. Contradiction detection runs for the candidates first: these people are not ranked.' },
 	'home.no_detection': { fr: 'Sans détection', en: 'No detection' },
-	'person.collected': { fr: 'Période couverte : {from} → {to}', en: 'Period covered: {from} → {to}' },
+	// The boxes of the record on a person's page: each label names its value.
+	'person.stat.facts': { fr: 'Faits', en: 'Facts' },
+	'person.stat.stances': { fr: 'Positions', en: 'Stances' },
+	'person.stat.contradictions': { fr: 'Contradictions', en: 'Contradictions' },
+	'person.stat.period': { fr: 'Période couverte', en: 'Period covered' },
+	'person.stat.last': { fr: 'Dernière contradiction', en: 'Last contradiction' },
 	// The days since the person's latest statement or act that contradicts
 	// another of theirs; a date known to the month or the year is told as is.
-	'person.last_contradiction_today': { fr: 'Dernière contradiction : aujourd’hui', en: 'Last contradiction: today' },
-	'person.last_contradiction_day': { fr: 'Dernière contradiction : il y a 1 jour', en: 'Last contradiction: 1 day ago' },
-	'person.last_contradiction_days': { fr: 'Dernière contradiction : il y a {n} jours', en: 'Last contradiction: {n} days ago' },
-	'person.last_contradiction_date': { fr: 'Dernière contradiction : {date}', en: 'Last contradiction: {date}' },
+	'person.last_contradiction_today': { fr: 'aujourd’hui', en: 'today' },
+	'person.last_contradiction_day': { fr: 'il y a 1 jour', en: '1 day ago' },
+	'person.last_contradiction_days': { fr: 'il y a {n} jours', en: '{n} days ago' },
 	'person.last_contradiction_hint': { fr: 'La date de la déclaration ou de l’acte le plus récent qui contredit une autre de ses positions.', en: 'The date of the most recent statement or act that contradicts another of their positions.' },
 	'person.ai_note': { fr: 'Les contradictions sont détectées automatiquement par une IA, qui peut se tromper. Chaque fait renvoie à sa source.', en: 'Contradictions are detected automatically by an AI, which can be wrong. Every fact links to its source.' },
 	'person.ai_note_link': { fr: 'La méthode', en: 'The method' },
