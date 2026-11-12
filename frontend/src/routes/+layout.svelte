@@ -33,7 +33,8 @@
 	};
 	// A page without an image of its own (a person's page has the photo) shows
 	// the logo: X draws an empty grey box for a link without one. A PNG: X
-	// reads no SVG (static/og-logo.svg is its source).
+	// reads no SVG (static/og-logo.svg is its source). 256 px on purpose:
+	// from 300 px wide WhatsApp draws the image across the whole message.
 	let pageMeta = $derived((($page.data as { meta?: { title?: string; description?: string; image?: string } })?.meta ?? {}));
 	let meta = $derived({ ...defaultMeta, ...pageMeta, image: pageMeta.image ?? $page.url.origin + '/og-logo.png' });
 
