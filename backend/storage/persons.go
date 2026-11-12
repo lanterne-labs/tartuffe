@@ -415,6 +415,13 @@ type PersonSummary struct {
 	// of the collection tasks that ended, else the dates of the facts.
 	CollectedFrom *time.Time `json:"collected_from,omitempty"`
 	CollectedTo   *time.Time `json:"collected_to,omitempty"`
+	// LastContradictionAt is the date of the person's latest statement or
+	// act that contradicts another of theirs (GetPersonByID only): the
+	// later fact of their most recent contradiction, at the date the site
+	// shows for it. LastContradictionPrecision is the precision of a
+	// statement date ("year", "month", "day"), absent for a source's date.
+	LastContradictionAt        *time.Time `json:"last_contradiction_at,omitempty"`
+	LastContradictionPrecision *string    `json:"last_contradiction_precision,omitempty"`
 	ScoreConfidence
 }
 
@@ -525,6 +532,25 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 		            JOIN facts fa ON fa.id = fs.fact_id
 		            WHERE fm.person_id = $1) x) f`, personID).Scan(&person.CollectedFrom, &person.CollectedTo); err != nil {
 		return nil, fmt.Errorf("failed to query the collected period of person %d: %w", personID, err)
+	}
+	// The latest dated fact of the person's contradictions: the later fact
+	// of a pair is the one that made the contradiction.
+	err = s.pool.QueryRow(ctx, `
+		SELECT d.at, d.precision
+		FROM (
+			SELECT `+shownDateSQL("f", "(SELECT MIN(published_at) FROM fact_sources WHERE fact_id = f.id)")+` AS at,
+			       CASE WHEN f.statement_date IS NOT NULL THEN f.statement_date_precision END AS precision
+			FROM facts f
+			WHERE f.id IN (
+				SELECT fact_a_id FROM contradictions WHERE person_id = $1
+				UNION SELECT fact_b_id FROM contradictions WHERE person_id = $1
+			)
+		) d
+		WHERE d.at IS NOT NULL AND d.at <= now()
+		ORDER BY d.at DESC
+		LIMIT 1`, personID).Scan(&person.LastContradictionAt, &person.LastContradictionPrecision)
+	if err != nil && err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("failed to query the last contradiction of person %d: %w", personID, err)
 	}
 
 	return &person, nil

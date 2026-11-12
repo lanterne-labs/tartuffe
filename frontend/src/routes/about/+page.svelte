@@ -4,6 +4,7 @@
 	// the limits and the neutrality rules. The lab's vote experiment has its
 	// own pages (/election/...): one line points there.
 	import { eventPaths } from '$lib/event';
+	import { LAB_URL, LAB_DOMAIN } from '$lib/contact';
 	import { lang } from '$lib/i18n';
 	import Pipeline from '$lib/components/about/Pipeline.svelte';
 	import ContradictionFlow from '$lib/components/about/ContradictionFlow.svelte';
@@ -247,7 +248,7 @@
 		<span class="kicker">{c.kicker}</span>
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
-		<p class="lab-line">{c.labLine} <a href="/lab">{c.labLink} →</a></p>
+		<p class="lab-line">{c.labLine} <a href="/lab">{c.labLink} →</a> · <a href={LAB_URL} target="_blank" rel="noopener">{LAB_DOMAIN}&nbsp;↗</a></p>
 		<ul class="pills">
 			{#each c.heroPills as p}<li>{p}</li>{/each}
 		</ul>

@@ -3,6 +3,7 @@
 	// contradiction checker is its permanent product; the presidential vote is
 	// a temporary experiment, shown with its end date (the featured poll's).
 	import { eventPaths } from '$lib/event';
+	import { LAB_URL, LAB_DOMAIN } from '$lib/contact';
 	import { onMount } from 'svelte';
 	import { lang, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
@@ -113,6 +114,8 @@
 	<header class="hero">
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
+		<!-- The lab's own site. -->
+		<a class="lab-site" href={LAB_URL} target="_blank" rel="noopener">{LAB_DOMAIN} <span aria-hidden="true">↗</span></a>
 	</header>
 
 	<section class="part">
@@ -191,6 +194,23 @@
 		max-width: 34rem;
 		margin: 0 auto;
 		text-wrap: balance;
+	}
+	.lab-site {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin-top: 1.4rem;
+		padding: 0.6rem 1.2rem;
+		border: 1px solid var(--border-card-hover);
+		border-radius: var(--radius-full);
+		color: var(--text-primary);
+		font-weight: 600;
+		text-decoration: none;
+		transition: background 0.15s;
+	}
+	.lab-site:hover {
+		background: var(--bg-card);
+		color: var(--text-primary);
 	}
 	.part {
 		margin-top: 2.75rem;

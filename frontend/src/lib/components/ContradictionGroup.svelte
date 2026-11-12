@@ -26,6 +26,11 @@
 		return unsub;
 	});
 
+	// The explanation that opens the group: that of its only pair. A fact
+	// contradicted by several has one explanation per pair, each at the head
+	// of its pair.
+	let lead = $derived(g.contradicting_facts.length === 1 ? whyOf(g.contradicting_facts[0], currentLang) : '');
+
 	function formatDateWithTime(s: string): string {
 		return new Date(s).toLocaleString([], {
 			year: 'numeric',
@@ -47,6 +52,12 @@
 	{/if}
 
 	<!-- Base (anchor) fact, shown once. -->
+	<!-- Why they conflict comes first. One pair: its explanation opens the
+	     group, above the two facts. A fact contradicted by several: each
+	     explanation opens its own pair, under the fact they share. -->
+	{#if lead}
+		<div class="spoke-reason group-reason">{lead}</div>
+	{/if}
 	<div class="base-fact">
 		<div class="base-label">
 			<strong>{tr('contradiction.base_fact', currentLang)}</strong>
@@ -71,7 +82,7 @@
 	<div class="spokes">
 		{#each g.contradicting_facts as f (f.contradiction_id)}
 			<div class="spoke" id="c-{f.contradiction_id}" class:highlight={highlight === f.contradiction_id}>
-				<div class="spoke-reason">{whyOf(f, currentLang)}</div>
+				{#if !lead}<div class="spoke-reason">{whyOf(f, currentLang)}</div>{/if}
 				<div class="comp-text"><span class="fact-id">[{f.fact_id}]</span> {pickLang(f.fact_text, f.fact_text_en, currentLang)}</div>
 				<div class="comp-links">
 					{#if f.fact_date}
@@ -172,6 +183,17 @@
 		line-height: 1.5;
 		color: var(--text-secondary);
 		margin-bottom: 0.375rem;
+	}
+
+	/* The explanation that opens a group: marked as in the feed. */
+	.group-reason {
+		margin-bottom: 0.75rem;
+		padding: 0.55rem 0.75rem;
+		border-left: 2px solid var(--error-border);
+		background: var(--error-bg);
+		border-radius: 0 var(--radius-md) var(--radius-md) 0;
+		font-size: 0.88rem;
+		line-height: 1.55;
 	}
 
 	.comp-date {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import TartuffeScore, { tartuffeOf } from '$lib/components/TartuffeScore.svelte';
+	import { LAB_URL, LAB_DOMAIN } from '$lib/contact';
 	// The landing page: the contradiction checker first (the question, the
 	// podium of the day, the contradiction of the day from the feed and its
 	// score, or a made-up example while it loads), then the lab (Lanterne Labs), then its temporary event, the
@@ -110,6 +111,8 @@
 			exTag: 'Exemple',
 			exTagLive: 'Aujourd’hui',
 			exLink: 'La fiche et les sources',
+			feedCta: 'Toutes les contradictions',
+			feedNote: 'Le fil : les contradictions des candidats, les plus récentes et les plus remarquées.',
 			exSaid: '« Je ne toucherai jamais à l’âge de départ à la retraite. »',
 			exSaidSrc: 'En interview',
 			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
@@ -132,7 +135,7 @@
 				{ href: CODE, icon: 'code', title: 'Le code', body: 'Le site est open source : la collecte, la détection, le calcul du score. Lisez-le, vérifiez-le, corrigez-le.', cta: 'Voir le code' }
 			],
 			aboutLink: 'Comment le score est calculé',
-			podiumKicker: 'Aujourd’hui',
+			podiumKicker: 'Le podium',
 			podiumLink: 'Tout le classement',
 
 			evTag: 'Expérience temporaire de Lanterne Labs',
@@ -165,6 +168,8 @@
 			exTag: 'Example',
 			exTagLive: 'Today',
 			exLink: 'The record and the sources',
+			feedCta: 'All the contradictions',
+			feedNote: 'The feed: the candidates’ contradictions, the latest and the most noticed.',
 			exSaid: '“I will never touch the retirement age.”',
 			exSaidSrc: 'Interview',
 			exDid: 'Votes to raise the retirement age to 64.',
@@ -187,7 +192,7 @@
 				{ href: CODE, icon: 'code', title: 'The code', body: 'The site is open source: the collection, the detection, the score. Read it, check it, fix it.', cta: 'See the code' }
 			],
 			aboutLink: 'How the score is computed',
-			podiumKicker: 'Today',
+			podiumKicker: 'The podium',
 			podiumLink: 'The whole ranking',
 
 			evTag: 'A temporary experiment by Lanterne Labs',
@@ -268,6 +273,10 @@
 				</div>
 				<div class="ex-body">
 					<div class="ex-facts">
+						<!-- Why they conflict first, then the two facts it is about. -->
+						{#if sides.why}
+							<p class="ex-why">{sides.why}</p>
+						{/if}
 						<div class="ex-fact">
 							<span class="ex-year">{sides.a.year}</span>
 							<p>{sides.a.text}</p>
@@ -279,9 +288,6 @@
 							<p>{sides.b.text}</p>
 							<span class="ex-src">{sides.b.src}</span>
 						</div>
-						{#if sides.why}
-							<p class="ex-why">{sides.why}</p>
-						{/if}
 					</div>
 					<div class="ex-score">
 						<TartuffeScore honesty={clash.person.honesty_score} lang={currentLang} size="lg" named={false} animate />
@@ -304,6 +310,7 @@
 				</div>
 				<div class="ex-body">
 					<div class="ex-facts">
+						<p class="ex-why">{c.exWhy}</p>
 						<div class="ex-fact">
 							<span class="ex-year">2019</span>
 							<p>{c.exSaid}</p>
@@ -315,7 +322,6 @@
 							<p>{c.exDid}</p>
 							<span class="ex-src">{c.exDidSrc}</span>
 						</div>
-						<p class="ex-why">{c.exWhy}</p>
 					</div>
 					<div class="ex-score">
 						<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
@@ -328,6 +334,16 @@
 			{/if}
 		</div>
 
+		<!-- From one contradiction to all of them: the feed. -->
+		<div class="feed-cta">
+			<a class="cta cta-feed" href="/feed">
+				<span class="cta-mark" aria-hidden="true">⟷</span>
+				{c.feedCta}
+				<span class="cta-arrow" aria-hidden="true">→</span>
+			</a>
+			<p>{c.feedNote}</p>
+		</div>
+
 		<div class="how">
 			<Pipeline lang={currentLang} steps={c.steps as [string, string][]} />
 			<a class="how-more" href="/about#how">{c.howMore} →</a>
@@ -338,7 +354,7 @@
 		<span class="kicker">{c.labKicker}</span>
 		<h2>{c.labTitle}</h2>
 		<p>{c.labBody}</p>
-		<p class="more"><a href="/lab">{c.labCta} →</a></p>
+		<p class="more"><a href="/lab">{c.labCta} →</a> <span class="more-sep" aria-hidden="true">·</span> <a href={LAB_URL} target="_blank" rel="noopener">{LAB_DOMAIN}&nbsp;↗</a></p>
 	</section>
 
 	<section class="event" use:reveal>
@@ -520,6 +536,45 @@
 		background: var(--accent-hover);
 		color: var(--on-accent);
 	}
+	/* The way to the feed, under the contradiction of the day. */
+	.feed-cta {
+		margin-top: 1.75rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.feed-cta p {
+		margin: 0;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+		max-width: 34rem;
+	}
+	.cta-feed {
+		gap: 0.6rem;
+		padding: 0.9rem 1.6rem;
+		font-size: 1.05rem;
+		background: var(--red);
+		color: #fff;
+		box-shadow: 0 6px 22px rgba(220, 38, 38, 0.28);
+		transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
+	}
+	.cta-feed:hover {
+		background: var(--red);
+		color: #fff;
+		transform: translateY(-1px);
+		box-shadow: 0 10px 28px rgba(220, 38, 38, 0.38);
+	}
+	.cta-mark {
+		font-size: 1.1rem;
+		line-height: 1;
+	}
+	.cta-arrow {
+		transition: transform 0.15s;
+	}
+	.cta-feed:hover .cta-arrow {
+		transform: translateX(3px);
+	}
 	.cta-ghost {
 		background: transparent;
 		border: 1px solid var(--border-card-hover);
@@ -692,7 +747,7 @@
 	}
 	/* Why the two conflict: the context the two lines lack. */
 	.ex-why {
-		margin: 0.8rem 0 0;
+		margin: 0 0 0.8rem;
 		padding: 0.6rem 0.85rem;
 		border-left: 2px solid var(--error-border);
 		background: var(--error-bg);
@@ -792,6 +847,10 @@
 	}
 	.more a {
 		color: var(--text-secondary);
+	}
+	.more-sep {
+		margin: 0 0.4rem;
+		color: var(--text-muted);
 	}
 	/* The rise, drawn as the feed's ticker: a red ▲ and the change. */
 	.ex-rise {

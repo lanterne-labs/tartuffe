@@ -128,3 +128,46 @@ func TestGetPersons_CandidateFilter(t *testing.T) {
 	assert.Equal(t, "false", fs.rankedArgs.candidate)
 	assert.Equal(t, http.StatusBadRequest, get(t, h, "/api/persons?candidate=maybe").Code)
 }
+
+// TestPodium: without a week (or for the current one) the live podium; for a
+// past week its snapshot; the past weeks are listed latest first.
+func TestPodium(t *testing.T) {
+	current := storage.WeekStart(time.Now())
+	last := current.AddDate(0, 0, -7).Format(time.DateOnly)
+	older := current.AddDate(0, 0, -14).Format(time.DateOnly)
+	fs := &fakeStore{
+		livePodium: []storage.PodiumEntry{{Rank: 1, ID: 1, Slug: "a", Name: "A", HonestyScore: 0.2, FactCount: 900}},
+		podiums: map[string][]storage.PodiumEntry{
+			last:  {{Rank: 1, ID: 2, Slug: "b", Name: "B", HonestyScore: 0.3, FactCount: 800}},
+			older: {{Rank: 1, ID: 3, Slug: "c", Name: "C", HonestyScore: 0.4, FactCount: 700}},
+		},
+	}
+	h := routerFor(fs)
+
+	var got podiumResponse
+	rec := get(t, h, "/api/podium")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.True(t, got.Live)
+	assert.Equal(t, current.Format(time.DateOnly), got.Week)
+	assert.Equal(t, []string{last, older}, got.Weeks)
+	require.Len(t, got.Persons, 1)
+	assert.Equal(t, int64(1), got.Persons[0].ID)
+
+	// Any day of a past week names it.
+	rec = get(t, h, "/api/podium?week="+current.AddDate(0, 0, -5).Format(time.DateOnly))
+	require.Equal(t, http.StatusOK, rec.Code)
+	got = podiumResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.False(t, got.Live)
+	assert.Equal(t, last, got.Week)
+	require.Len(t, got.Persons, 1)
+	assert.Equal(t, int64(2), got.Persons[0].ID)
+
+	// A week ahead is the live podium; a bad date is refused.
+	rec = get(t, h, "/api/podium?week="+current.AddDate(0, 0, 21).Format(time.DateOnly))
+	got = podiumResponse{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.True(t, got.Live)
+	assert.Equal(t, http.StatusBadRequest, get(t, h, "/api/podium?week=last").Code)
+}

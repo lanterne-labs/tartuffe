@@ -22,7 +22,9 @@
 	import { authFetch, session } from '$lib/auth';
 	import type { FeedItem, FeedPage, PersonSummary } from '$lib/types';
 
-	type Filter = '' | 'contradiction' | 'fact';
+	// What the feed lists: the contradictions (the default, no `kind` in the
+	// URL), the facts, or both together (`kind=all`).
+	type Filter = 'contradiction' | 'fact' | 'all';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -36,7 +38,7 @@
 	let effectHint = $state<FeedItem | null>(null);
 
 	const isDay = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
-	let filter = $derived(($page.url.searchParams.get('kind') ?? '') as Filter);
+	let filter = $derived<Filter>($page.url.searchParams.get('kind') === 'fact' ? 'fact' : $page.url.searchParams.get('kind') === 'all' ? 'all' : 'contradiction');
 	let sort = $derived<'hot' | 'new'>($page.url.searchParams.get('sort') === 'new' ? 'new' : 'hot');
 	let personFilter = $derived(/^\d+$/.test($page.url.searchParams.get('person') ?? '') ? Number($page.url.searchParams.get('person')) : 0);
 	let fromDay = $derived(isDay($page.url.searchParams.get('from')));
@@ -47,7 +49,7 @@
 	let filterKey = $derived(`${sort}|${filter}|${personFilter}|${fromDay}|${toDay}|${token}`);
 	let filtered = $derived(!!(personFilter || fromDay || toDay));
 	// The filters hide behind an icon; its badge counts the active ones.
-	let active = $derived([filter, personFilter, fromDay, toDay].filter(Boolean).length);
+	let active = $derived([personFilter, fromDay, toDay].filter(Boolean).length);
 	let showFilters = $state(false);
 
 	// The person picker: the chosen person's name, and the matches of a search.
@@ -124,7 +126,7 @@
 		error = false;
 		try {
 			const q = new URLSearchParams({ limit: '20', sort });
-			if (filter) q.set('kind', filter);
+			if (filter !== 'all') q.set('kind', filter);
 			if (personFilter) q.set('person', String(personFilter));
 			if (fromDay) q.set('from', fromDay);
 			if (toDay) q.set('to', toDay);
@@ -161,7 +163,7 @@
 	});
 
 	function setFilter(f: Filter) {
-		setParams({ kind: f });
+		setParams({ kind: f === 'contradiction' ? '' : f });
 	}
 
 	// The next page loads when the end of the list comes near.
@@ -251,16 +253,17 @@
 		</div>
 	</header>
 
-	{#if showFilters}
-	<div class="panel" id="feed-filters">
-	<div class="tabs" role="tablist">
-		{#each [['', 'feed.all'], ['contradiction', 'feed.contradictions'], ['fact', 'feed.facts']] as [f, key] (f)}
-			<button role="tab" class="tab" class:active={filter === f} aria-selected={filter === f} onclick={() => setFilter(f as Filter)}>
+	<!-- What the feed lists, always in view: the contradictions first. -->
+	<div class="kinds" role="tablist" aria-label={tr('feed.kinds', currentLang)}>
+		{#each [['contradiction', 'feed.contradictions'], ['fact', 'feed.facts'], ['all', 'feed.all']] as [f, key] (f)}
+			<button role="tab" class="kind-tab" class:active={filter === f} aria-selected={filter === f} onclick={() => setFilter(f as Filter)}>
 				{tr(key, currentLang)}
 			</button>
 		{/each}
 	</div>
 
+	{#if showFilters}
+	<div class="panel" id="feed-filters">
 	<div class="filters">
 		<div class="picker">
 			{#if personFilter}
@@ -299,7 +302,7 @@
 			<input type="date" value={toDay} min={fromDay || undefined} onchange={(e) => setParams({ to: (e.currentTarget as HTMLInputElement).value })} />
 		</label>
 		{#if active > 0}
-			<button class="reset" onclick={() => setParams({ kind: '', person: '', from: '', to: '' })}>{tr('feed.filter.reset', currentLang)}</button>
+			<button class="reset" onclick={() => setParams({ person: '', from: '', to: '' })}>{tr('feed.filter.reset', currentLang)}</button>
 		{/if}
 	</div>
 	</div>
@@ -363,11 +366,12 @@
 
 					<a href={link} class="body">
 						{#if it.kind === 'contradiction' && it.other}
-							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
-							<p class="line line-b"><span class="yr">{factYear(it.other.date, it.other.date_precision)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
+							<!-- Why they conflict first, then the two facts it is about. -->
 							{#if whyOf(it, currentLang)}
 								<p class="why">{whyOf(it, currentLang)}</p>
 							{/if}
+							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
+							<p class="line line-b"><span class="yr">{factYear(it.other.date, it.other.date_precision)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
 						{:else}
 							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
 						{/if}
@@ -529,26 +533,36 @@
 		color: var(--text-primary);
 		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 	}
-	.tabs {
+	/* The switch of what is listed: one track, three choices. */
+	.kinds {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.3rem;
-		margin-bottom: 0.6rem;
-	}
-	.tab {
-		padding: 0.3rem 0.75rem;
+		gap: 0.2rem;
+		margin-bottom: 1rem;
+		padding: 0.2rem;
+		border: 1px solid var(--border-card);
 		border-radius: var(--radius-full);
-		border: 1px solid var(--glass-border);
+		background: var(--bg-card);
+	}
+	.kind-tab {
+		flex: 1 1 0;
+		min-width: 0;
+		padding: 0.45rem 0.5rem;
+		border: none;
+		border-radius: var(--radius-full);
 		background: transparent;
 		color: var(--text-secondary);
 		font: inherit;
-		font-size: 0.8rem;
+		font-size: 0.85rem;
+		font-weight: 600;
 		cursor: pointer;
+		transition: background var(--transition-fast), color var(--transition-fast);
 	}
-	.tab.active {
+	.kind-tab:hover {
+		color: var(--text-primary);
+	}
+	.kind-tab.active {
 		background: var(--accent);
-		border-color: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 	}
 	.filters {
 		display: flex;
@@ -666,9 +680,8 @@
 			width: 2.5rem;
 			height: 2.5rem;
 		}
-		.tab {
+		.kind-tab {
 			min-height: 2.5rem;
-			padding: 0.3rem 0.9rem;
 		}
 		.picker input,
 		.day input,
@@ -850,7 +863,7 @@
 	}
 	/* Why the two lines conflict, in full: it is what makes the pair readable. */
 	.why {
-		margin: 0.7rem 0 0;
+		margin: 0 0 0.7rem;
 		padding: 0.55rem 0.75rem;
 		border-left: 2px solid var(--error-border);
 		background: var(--error-bg);
