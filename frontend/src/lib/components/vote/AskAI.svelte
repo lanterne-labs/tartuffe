@@ -9,7 +9,7 @@
 
 	const N = ' ';
 	const ISOLOIR = 'https://github.com/lanterne-labs/isoloir';
-	const SITE = 'https://github.com/lanterne-labs/mirror';
+	const SITE = 'https://github.com/lanterne-labs/tartuffe';
 
 	const t = {
 		fr: {

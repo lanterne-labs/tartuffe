@@ -71,7 +71,7 @@
 
 	// The site's source, public under the AGPL: the third way in, beside
 	// the ranking and the feed.
-	const CODE = 'https://github.com/lanterne-labs/mirror';
+	const CODE = 'https://github.com/lanterne-labs/tartuffe';
 
 	const content = {
 		fr: {
