@@ -1304,3 +1304,26 @@ cases:
     notes: "The article (franceinfo, 6 May 2026) has him ask to suspend the CEE surcharge in the same interview; fact_b here carries what the stored fact left out. Prod 2426 (2026-11-12)."
     date_a: "2026-04-06"
     date_b: "2026-05-06"
+
+  # ---- A penalty the press nicknames a « taxe » is not a tax rise: it does not
+  # ---- break a pledge of no tax increase (the owner, 2026-11-13).
+  - name: "FP_2455_attal_taxe_lapin_not_tax_rise"
+    fact_a: "Gabriel Attal a déclaré vouloir mettre en œuvre la « taxe lapin », une pénalité pour les patients qui n'honorent pas leur rendez-vous médical, censurée dans une version précédente par le Conseil constitutionnel en février 2025, en tenant compte des retours du Conseil constitutionnel."
+    fact_b: "Gabriel Attal s'est engagé à inscrire dans la loi une règle d'or budgétaire interdisant toute augmentation des impôts quoi qu'il arrive."
+    claimed_reason: "Il s'engageait à interdire toute hausse d'impôts quoi qu'il arrive, mais il veut ensuite mettre en œuvre une taxe censurée."
+    expect: drop
+    bucket: different_subjects
+    notes: "The stored fact says only « la taxe »; fact_a here names it as the article does (lemoniteurdespharmacies.fr, 23 Oct 2026). A no-show penalty paid to the doctor, which he already defended as Prime Minister in April 2024, before the pledge. Prod 2455 (2026-11-13)."
+    date_a: "2026-10-23"
+    date_b: "2024-06-20"
+
+  # ---- Its twin: a real new tax (a levy that funds the State) still breaks the pledge.
+  - name: "TP_2366_bardella_new_tax_breaks_no_tax_rise"
+    fact_a: "Jordan Bardella a déclaré assumer de soutenir une taxe sur les multinationales étrangères."
+    fact_b: "Jordan Bardella a déclaré que le RN refusera catégoriquement toute nouvelle hausse d'impôts."
+    claimed_reason: "Il refuse toute nouvelle hausse d'impôts mais assume ensuite de soutenir une nouvelle taxe sur les multinationales étrangères."
+    expect: keep
+    bucket: different_subjects
+    notes: "A tax on multinationals is a levy for the State, not a penalty with a nickname: the absolute pledge is broken. The twin of FP_2455. Prod 2366, reviewed real."
+    date_a: "2025-11-05"
+    date_b: "2025-06-16"
