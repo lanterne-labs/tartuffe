@@ -138,6 +138,9 @@ func TestBotFlow(t *testing.T) {
 	msg := tg.last("sendMessage")
 	require.NotNil(t, msg, "a draft is sent an hour before noon")
 	assert.Contains(t, msg["text"], "<b>Satirique</b>")
+	for _, context := range []string{"Fait 1", "Pourquoi", "source 1", "Pour d'autres versions"} {
+		assert.NotContains(t, msg["text"], context, "the draft is the versions, no context")
+	}
 	assert.Contains(t, msg["text"], "@jdupont @lemondefr")
 	require.NoError(t, b.Tick(ctx))
 	var drafts int
@@ -558,7 +561,8 @@ func TestBotReply(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("(from:jdupont) -filter:replies since_time:%d", start.Add(-24*time.Hour).Unix()), query)
 	msg := tg.last("sendMessage")
 	text := msg["text"].(string)
-	assert.Contains(t, text, "Réponse à proposer")
+	assert.Contains(t, text, "Réponse à jean dupont")
+	assert.NotContains(t, text, "Fait 1", "no context: the tweet and the versions")
 	assert.Contains(t, text, "250 000 vues")
 	assert.Contains(t, text, "je n&#39;ai jamais varié", "the most seen tweet of the candidate")
 	assert.Less(t, strings.Index(text, "sauf de 60 à 64"), strings.Index(text, "Jamais varié ?"), "the funny version first")
@@ -606,4 +610,30 @@ func TestBotReply(t *testing.T) {
 	var targets int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_reply_targets`).Scan(&targets))
 	assert.Equal(t, 2, targets, "a tweet of someone else or with few likes is never a target")
+}
+
+// TestBotReview: "À revoir" on a draft publishes nothing, keeps the
+// contradiction on the site and records a debatable review, which puts it in
+// the next audit's list; the contradiction is not drafted again.
+func TestBotReview(t *testing.T) {
+	b, tg, poster, pool := testBot(t)
+	ctx := context.Background()
+	require.NoError(t, b.Tick(ctx))
+	keyboard := tg.last("sendMessage")["reply_markup"].(map[string]any)["inline_keyboard"].([]any)
+	assert.Equal(t, "r:1", keyboard[1].([]any)[1].(map[string]any)["callback_data"])
+	var cid int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT contradiction_id FROM x_posts WHERE id = 1`).Scan(&cid))
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "r:1"}))
+	assert.Equal(t, "skipped", postStatus(t, pool, 1))
+	var verdict, note string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT verdict, note FROM contradiction_reviews WHERE contradiction_id = $1 AND reviewer = 'xbot'`, cid).Scan(&verdict, &note))
+	assert.Equal(t, "debatable", verdict)
+	assert.Equal(t, ReviewNote, note)
+	var left int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM contradictions WHERE id = $1`, cid).Scan(&left))
+	assert.Equal(t, 1, left, "it stays on the site")
+	assert.Contains(t, tg.last("editMessageText")["text"], "À revoir")
+	b.Now = func() time.Time { return time.Date(2026, 11, 10, 12, 0, 0, 0, b.Zone) }
+	require.NoError(t, b.Tick(ctx))
+	assert.Empty(t, poster.posted)
 }

@@ -260,35 +260,21 @@ func (b *Bot) holdSlot(ctx context.Context, kind string, slot time.Time) error {
 	return err
 }
 
-// ReplyDraftMessage is the Telegram message of a reply draft: the tweet, the
-// contradiction with its sources, the versions.
+// ReplyDraftMessage is the Telegram message of a reply draft: the tweet it
+// answers and the versions, nothing else (see DraftMessage).
 func ReplyDraftMessage(d *Draft, t *storage.ReplyTarget, site string) string {
 	c := d.Contradiction
 	esc := html.EscapeString
 	var m strings.Builder
-	fmt.Fprintf(&m, "↩️ <b>Réponse à proposer sous un tweet de %s</b>\n", esc(c.PersonName))
 	reach := ""
 	if t.Views > 0 {
 		reach = fmt.Sprintf(" · %s vues", thousands(t.Views))
 	}
-	fmt.Fprintf(&m, "<a href=\"%s\">@%s</a>%s\n<blockquote>%s</blockquote>\n\n", esc(t.URL), esc(t.Author), reach, esc(clip(t.Text, 600)))
-	side := func(label string, f storage.BotFact) {
-		day := f.DateFR()
-		if day == "" {
-			day = "date ?"
-		}
-		fmt.Fprintf(&m, "<b>%s</b> (%s) : %s\n", label, day, esc(f.Text))
-		if f.Quote != "" {
-			fmt.Fprintf(&m, "<i>« %s »</i>\n", esc(clip(f.Quote, 300)))
-		}
-	}
-	side("Fait 1", c.A)
-	side("Fait 2", c.B)
-	fmt.Fprintf(&m, "<b>Pourquoi</b> : %s\n<a href=\"%s\">sur le site</a>\n", esc(c.Reason), esc(ContradictionLink(site, &c)))
+	fmt.Fprintf(&m, "↩️ <b>Réponse à %s</b>%s · <a href=\"%s\">son tweet</a> · <a href=\"%s\">voir</a>\n<blockquote>%s</blockquote>\n",
+		esc(c.PersonName), reach, esc(t.URL), esc(ContradictionLink(site, &c)), esc(clip(t.Text, 400)))
 	for i, v := range d.Versions {
-		fmt.Fprintf(&m, "\n<b>%s</b> (%d car.)\n<pre>%s</pre>\n", esc(label(d, i)), Length(v), esc(v))
+		fmt.Fprintf(&m, "\n<b>%s</b>\n<pre>%s</pre>\n", esc(label(d, i)), esc(v))
 	}
-	m.WriteString("\nLe bouton ouvre X sur la réponse déjà écrite : relisez, puis envoyez depuis le compte. Rien n'est publié sans vous.\n\n" + replyHelp)
 	return m.String()
 }
 
@@ -301,6 +287,7 @@ func replyButtons(id int64, t *storage.ReplyTarget, d *Draft) [][]Button {
 	return [][]Button{open, {
 		{Text: "✅ C'est envoyé", Data: fmt.Sprintf("d:%d", id)},
 		{Text: "⏭ Passer", Data: fmt.Sprintf("s:%d", id)},
+		{Text: "🔎 À revoir", Data: fmt.Sprintf("r:%d", id)},
 	}}
 }
 
