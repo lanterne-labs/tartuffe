@@ -58,6 +58,7 @@ A breaker does NOT invalidate a promise when:
 - PLEDGE KEPT, WORDING REGRETTED: a person who still honours a pledge and only says it should have been worded otherwise ("I should have said the median wage, not the minimum wage; but I committed, so I do it") has not walked it back. NO.
 - SELF-POSITIONING: « ne pas se situer vis-à-vis de X » says how the person defines themself, not what they think of X: a judgement of X is no denial of it.
 - SELF-CORRECTION: a factual claim the person corrects within days, saying so (« nulle part » then « vu, page 70 »), is a correction, not a reversal.
+- PENALTY NICKNAMED A TAX: a fine or a penalty on a behaviour that the press calls a « taxe » (the « taxe lapin » on missed medical appointments, paid to the doctor) is not a tax rise: wanting it does not break a pledge of no tax increase. A new or higher levy that funds the State (a tax on profits, a VAT rise) does.
 - WHOSE PROPOSAL: « ce n'est pas une position que nous défendons » said of a measure the person still wants implemented marks it as another's proposal, not a refusal of it.
 - DEADLINE MOVED: a deadline the person moves themself before it passed, with no act and no denial (« fin de l'année » then « fin mai » days later), is a pledge replaced, not broken, until the term passes unkept.
 - PLEA BEFORE THE VERDICT: a defence plea made during the trial (« bonne foi », « pas de système ») is a stage before the judgement, not a claim against it; only a claim made after the conviction contradicts it.
