@@ -145,24 +145,83 @@ func TestQuoteTarget(t *testing.T) {
 	assert.Empty(t, id)
 }
 
-func TestVoteTweet(t *testing.T) {
-	v := &VoteState{Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 50, Counted: 2}
+func TestMemory(t *testing.T) {
+	m := Remember([]string{
+		"Pour voter ici, il suffit de votre passeport et de votre téléphone.\n\n@lemondefr @libe\nhttps://tartuffe.me/election/presidentielle-2027",
+		"Et vous, c'est qui votre tartuffe préféré ?",
+	})
+	// The same text, whatever its tags, link, case and punctuation.
+	assert.Equal(t, "already proposed", m.Seen("pour voter ici il suffit de votre passeport, et de votre téléphone !\n\n@anticor_org"))
+	// A close variant.
+	assert.Contains(t, m.Seen("Pour voter ici, il suffit de votre passeport et de votre téléphone. Rien d'autre."), "too close")
+	assert.Empty(t, m.Seen("Un vote où personne ne peut savoir qui a voté quoi."))
+	assert.Equal(t, []string{"Pour voter ici, il suffit de votre passeport et de votre téléphone."}, m.Recent(1))
+	var none *Memory
+	assert.Empty(t, none.Seen("x"))
+	assert.Equal(t, "Deux\nlignes", Body("Deux\nlignes\n\n@a @b\nhttps://x.y/z"))
+}
+
+func TestComposeDropsSeen(t *testing.T) {
+	w := &fakeWriter{reply: Reply{Standard: "Jean Dupont, en 2022 puis en 2025 : deux avis.", Satirical: "Jean Dupont, toujours constant."}}
+	d, err := Recompose(context.Background(), w, contradiction(), []string{"jdupont"}, "", nil, Remember([]string{"Jean Dupont, toujours constant.\n\n@jdupont @libe"}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Sobre"}, d.Labels)
+	require.Len(t, d.Dropped, 1)
+	assert.Contains(t, d.Dropped[0], "already proposed")
+}
+
+func TestVoteAngles(t *testing.T) {
+	v := &VoteState{Slug: "presidentielle-2027", MaxChoices: 3}
+	monday := time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC)
+	keys := func(as []VoteAngle) (out []string) {
+		for _, a := range as {
+			out = append(out, a.Key)
+		}
+		return
+	}
 	seen := map[string]bool{}
-	for i := range voteTexts {
-		tw := VoteTweet(v, i, "https://tartuffe.me/", nil)
-		assert.LessOrEqual(t, Length(tw), MaxLength, tw)
-		assert.True(t, strings.HasSuffix(tw, "\nhttps://tartuffe.me/election/presidentielle-2027"), tw)
-		assert.NotContains(t, tw, "%")
-		assert.NotContains(t, tw, "bulletins", "below the event's minimum the count is not told")
-		seen[tw] = true
+	for _, a := range VoteAngles {
+		assert.False(t, seen[a.Key], a.Key)
+		seen[a.Key] = true
 	}
-	assert.Len(t, seen, len(voteTexts))
-	assert.Equal(t, VoteTweet(v, 0, "https://tartuffe.me", nil), VoteTweet(v, len(voteTexts), "https://tartuffe.me", nil), "the texts come in turn")
-	assert.Contains(t, VoteTweet(v, 0, "https://tartuffe.me", nil), "jusqu'à 3 candidats")
-	v.Counted = 412
-	for i := range voteTexts {
-		tw := VoteTweet(v, i, "https://tartuffe.me", nil)
-		assert.LessOrEqual(t, Length(tw), MaxLength, tw)
+	plain := keys(PickVoteAngles(nil, v, monday, false, false))
+	assert.Equal(t, "tartuffe", plain[0], "the playful ones first")
+	for _, k := range plain {
+		assert.NotContains(t, k, "quote-")
+		assert.NotEqual(t, "said", k)
+		assert.NotEqual(t, "sunday", k)
 	}
-	assert.Contains(t, VoteTweet(v, 1, "https://tartuffe.me", nil), "Déjà 412 bulletins.")
+	all := keys(PickVoteAngles(nil, v, monday.AddDate(0, 0, 6), true, true))
+	assert.Len(t, all, len(VoteAngles))
+	// The angle just used goes last.
+	used := map[string]time.Time{"tartuffe": monday}
+	next := keys(PickVoteAngles(used, v, monday, false, false))
+	assert.Equal(t, "tartuffe", next[len(next)-1])
+	assert.Equal(t, plain[1], next[0])
+}
+
+func TestComposeVote(t *testing.T) {
+	v := &VoteState{Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 50, Counted: 412}
+	w := &fakeWriter{reply: Reply{Standard: "Déjà 412 bulletins : votez pour 2027.", Satirical: "Classez jusqu'à 3 candidats pour 2027, du moins tartuffe au plus tartuffe."}}
+	req := VoteRequest{State: v, Angle: VoteAngles[0], Site: "https://tartuffe.me/", Tags: []string{"libe"}, Seen: Remember([]string{"Un ancien tweet du vote."})}
+	versions, dropped, err := ComposeVote(context.Background(), w, req)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Classez jusqu'à 3 candidats pour 2027, du moins tartuffe au plus tartuffe.\n\n@libe\nhttps://tartuffe.me/election/presidentielle-2027"}, versions)
+	require.Len(t, dropped, 1)
+	assert.Contains(t, dropped[0], "a number (412)")
+	assert.Contains(t, w.prompt, "Never give a number of votes")
+	assert.Contains(t, w.prompt, "Un ancien tweet du vote.")
+	assert.Contains(t, w.prompt, VoteAngles[0].Brief)
+	assert.NotContains(t, w.prompt, "412", "the writer never learns the count")
+
+	// A candidate taken at their word: only their own words between « ».
+	d := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	req.Said = &storage.VoteFact{PersonName: "Jean Dupont", BotFact: storage.BotFact{Text: "Jean Dupont veut un référendum.", Quote: "Il faut rendre la parole au peuple par référendum.", Date: &d}}
+	w.reply = Reply{Standard: "Jean Dupont : « rendre la parole au peuple ». Chiche : le vote est ouvert.", Satirical: "Jean Dupont : « le peuple doit voter chaque dimanche ». Ça tombe bien."}
+	versions, dropped, err = ComposeVote(context.Background(), w, req)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	assert.Contains(t, versions[0], "Chiche")
+	assert.Contains(t, dropped[0], "quote not in the source")
+	assert.Contains(t, w.prompt, "Il faut rendre la parole au peuple par référendum.")
 }

@@ -286,12 +286,13 @@ func (r *Revision) prompt(base string) string {
 // Compose writes the versions of a tweet on the contradiction with its tags
 // and link ("": none), and keeps the versions that pass Check.
 func Compose(ctx context.Context, w Writer, c *storage.BotContradiction, tags []string, link string) (*Draft, error) {
-	return Recompose(ctx, w, c, tags, link, nil)
+	return Recompose(ctx, w, c, tags, link, nil, nil)
 }
 
 // Recompose is Compose after a revision asked of the versions before (nil:
-// a first draft).
-func Recompose(ctx context.Context, w Writer, c *storage.BotContradiction, tags []string, link string, rev *Revision) (*Draft, error) {
+// a first draft); a version that seen holds (the texts proposed before, nil:
+// none) is dropped.
+func Recompose(ctx context.Context, w Writer, c *storage.BotContradiction, tags []string, link string, rev *Revision, seen *Memory) (*Draft, error) {
 	suffix := ""
 	if len(tags) > 0 {
 		suffix = "\n\n@" + strings.Join(tags, " @")
@@ -311,7 +312,11 @@ func Recompose(ctx context.Context, w Writer, c *storage.BotContradiction, tags 
 	d := &Draft{Contradiction: *c, Tags: tags, Link: link, Reasoning: reply.Reasoning}
 	for _, st := range Styles {
 		t := strings.TrimSpace(reply.tweet(st.Key))
-		if why := Check(c, t, room); why != "" {
+		why := Check(c, t, room)
+		if why == "" {
+			why = seen.Seen(t)
+		}
+		if why != "" {
 			d.Dropped = append(d.Dropped, st.Label+", "+why+": "+t)
 			continue
 		}

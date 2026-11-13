@@ -67,7 +67,7 @@ func (p *fakePoster) Post(_ context.Context, text, quote string) (string, error)
 }
 
 // testBot builds the bot over the test database with one candidate, two
-// contradictions and a tag account. It returns the bot, the fake Telegram,
+// contradictions that share no fact and a tag account. It returns the bot, the fake Telegram,
 // the fake poster and the pool.
 func testBot(t *testing.T) (*Bot, *fakeTelegram, *fakePoster, *pgxpool.Pool) {
 	_ = godotenv.Overload("../../.env")
@@ -87,7 +87,7 @@ func testBot(t *testing.T) (*Bot, *fakeTelegram, *fakePoster, *pgxpool.Pool) {
 	_, err = pool.Exec(ctx, `INSERT INTO twitter_handles (person_id, handle) VALUES ($1, 'JDupont')`, person)
 	require.NoError(t, err)
 	var facts []int64
-	for i, q := range []string{"Je me battrai pour la retraite à 60 ans.", "Je voterai le report à 64 ans.", "Je ne change jamais d'avis."} {
+	for i, q := range []string{"Je me battrai pour la retraite à 60 ans.", "Je voterai le report à 64 ans.", "Je ne change jamais d'avis.", "Je voterai le report à 64 ans, finalement."} {
 		var id int64
 		emb := "[" + strings.TrimSuffix(strings.Repeat("0.1,", 4096), ",") + "]"
 		require.NoError(t, pool.QueryRow(ctx, `INSERT INTO facts (fact_text, embedding, created_at) VALUES ($1, $2::halfvec, now()) RETURNING id`, "Il dit : "+q, emb).Scan(&id))
@@ -96,7 +96,7 @@ func testBot(t *testing.T) (*Bot, *fakeTelegram, *fakePoster, *pgxpool.Pool) {
 		require.NoError(t, err)
 		facts = append(facts, id)
 	}
-	for _, pair := range [][2]int64{{facts[0], facts[1]}, {facts[1], facts[2]}} {
+	for _, pair := range [][2]int64{{facts[0], facts[1]}, {facts[2], facts[3]}} {
 		_, err = pool.Exec(ctx, `INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason, detected_at) VALUES ($1, $2, $3, '60 puis 64.', now())`, person, pair[0], pair[1])
 		require.NoError(t, err)
 	}
@@ -110,8 +110,9 @@ func testBot(t *testing.T) (*Bot, *fakeTelegram, *fakePoster, *pgxpool.Pool) {
 	poster := &fakePoster{}
 	zone, _ := time.LoadLocation("Europe/Paris")
 	now := time.Date(2026, 11, 10, 11, 30, 0, 0, zone)
-	// The sober version quotes the fact both contradictions share: the draft
-	// has its two versions whichever contradiction is picked.
+	// The sober version quotes words both contradictions hold (they share no
+	// fact: a pair that shares one with a drafted pair is never drafted): the
+	// draft has its two versions whichever contradiction is picked.
 	b := &Bot{Store: store, Telegram: NewTelegram("tok", 42, srv.URL), Poster: poster,
 		Writer: &fakeWriter{reply: Reply{Standard: "Jean Dupont : « Je voterai le report à 64 ans ». Logique.", Satirical: "Jean Dupont, toujours constant."}},
 		Slots:  []Clock{{12, 0}, {19, 0}}, Zone: zone, Lead: time.Hour, Grace: time.Hour, Site: "https://tartuffe.me",
@@ -165,6 +166,7 @@ func TestBotFlow(t *testing.T) {
 	assert.Len(t, poster.posted, 1)
 
 	// The evening slot: a draft on the other contradiction, marked false.
+	b.Writer.(*fakeWriter).reply = Reply{Standard: "Jean Dupont : « Je voterai le report à 64 ans ». Tiens donc.", Satirical: "Jean Dupont, la suite au prochain épisode."}
 	b.Now = func() time.Time { return start.Add(6*time.Hour + 45*time.Minute) }
 	require.NoError(t, b.Tick(ctx))
 	require.Equal(t, "draft", postStatus(t, pool, 2))
@@ -264,6 +266,7 @@ func TestBotReplyAndExpiry(t *testing.T) {
 	assert.Contains(t, tg.last("editMessageText")["text"], "Expiré")
 
 	b.Poster = nil
+	b.Writer.(*fakeWriter).reply = Reply{Standard: "Jean Dupont, une autre histoire.", Satirical: "Jean Dupont, la suite au prochain épisode."}
 	b.Now = func() time.Time { return start.Add(6*time.Hour + 45*time.Minute) }
 	require.NoError(t, b.Tick(ctx))
 	var msg int64
@@ -336,7 +339,7 @@ func TestBotQuoteRefused(t *testing.T) {
 		ctx := context.Background()
 		b.Quote = quote
 		poster.refuseQuotes = true
-		_, err := pool.Exec(ctx, `UPDATE fact_sources SET source_url = 'https://x.com/jdupont/status/555' WHERE fact_id = 2`)
+		_, err := pool.Exec(ctx, `UPDATE fact_sources SET source_url = 'https://x.com/jdupont/status/555' WHERE fact_id IN (2, 4)`)
 		require.NoError(t, err)
 		require.NoError(t, b.Tick(ctx))
 		require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "p:1:1", MessageID: 1}))
@@ -370,6 +373,7 @@ func TestBotVoteRevise(t *testing.T) {
 	require.NoError(t, b.Handle(ctx, Update{ReplyTo: msg, Text: "plus court"}))
 	assert.Contains(t, w.prompt, "plus court")
 	assert.Contains(t, w.prompt, "Classez jusqu'à 3 candidats", "what may be said of the vote")
+	assert.Contains(t, w.prompt, VoteAngles[0].Brief, "the rewrite keeps the angle")
 	var variants []string
 	var revised int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT variants, telegram_message_id FROM x_posts WHERE id = 1`).Scan(&variants, &revised))
@@ -402,7 +406,7 @@ func TestBotVoteTweet(t *testing.T) {
 		return &VoteState{Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 50, Counted: 301}, nil
 	}
 	b.Quote = true
-	_, err := pool.Exec(ctx, `UPDATE fact_sources SET source_url = 'https://x.com/jdupont/status/555' WHERE fact_id = 2`)
+	_, err := pool.Exec(ctx, `UPDATE fact_sources SET source_url = 'https://x.com/jdupont/status/555' WHERE fact_id IN (2, 4)`)
 	require.NoError(t, err)
 
 	// 11:30: the noon contradiction draft only.
@@ -428,7 +432,7 @@ func TestBotVoteTweet(t *testing.T) {
 	require.NoError(t, b.Tick(ctx))
 	require.Len(t, poster.posted, 2)
 	assert.Contains(t, poster.posted[1], "https://tartuffe.me/election/presidentielle-2027")
-	assert.Contains(t, poster.posted[1], "Déjà 301 bulletins.")
+	assert.NotContains(t, poster.posted[1], "301", "a tweet never tells the count")
 	assert.Contains(t, poster.posted[1], "\n\n@lemondefr\n", "the approved outlet is tagged, nobody else")
 	assert.NotContains(t, poster.posted[1], "@jdupont")
 	assert.Empty(t, poster.quoted[1])
@@ -441,4 +445,84 @@ func TestBotVoteTweet(t *testing.T) {
 	var votes int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_posts WHERE kind = 'vote'`).Scan(&votes))
 	assert.Equal(t, 1, votes)
+}
+
+// TestBotVoteNeverRepeats: a vote draft skipped never comes back: the next
+// slot takes another angle, a version already proposed is dropped, and when
+// the writer has nothing new the slot is left with a word to the chat. A
+// tweet of ours on a contradiction gives the next vote tweet a quote, once;
+// what a candidate said of the vote gives another, once.
+func TestBotVoteNeverRepeats(t *testing.T) {
+	b, tg, poster, pool := testBot(t)
+	ctx := context.Background()
+	b.Slots = nil
+	b.VoteSlots = []Clock{{12, 0}, {19, 0}}
+	b.Vote = func(context.Context, time.Time) (*VoteState, error) {
+		return &VoteState{Slug: "presidentielle-2027", MaxChoices: 3}, nil
+	}
+	w := b.Writer.(*fakeWriter)
+	w.reply = Reply{Standard: "Le vote pour 2027 est ouvert.", Satirical: "Et vous, c'est qui votre tartuffe préféré ?"}
+	start := b.Now()
+	angleOf := func(id int64) (angle, status string) {
+		require.NoError(t, pool.QueryRow(ctx, `SELECT angle, status FROM x_posts WHERE id = $1`, id).Scan(&angle, &status))
+		return
+	}
+
+	require.NoError(t, b.Tick(ctx))
+	angle, _ := angleOf(1)
+	assert.Equal(t, "tartuffe", angle)
+	msg := tg.last("sendMessage")["text"].(string)
+	assert.Less(t, strings.Index(msg, "tartuffe préféré ?"), strings.Index(msg, "est ouvert."), "the funny version first")
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "s:1"}))
+
+	// 18:15: the writer says the same again: nothing is proposed.
+	b.Now = func() time.Time { return start.Add(6*time.Hour + 45*time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	angle, status := angleOf(2)
+	assert.Equal(t, "", angle)
+	assert.Equal(t, "skipped", status)
+	assert.Contains(t, tg.last("sendMessage")["text"], "Pas de tweet du vote")
+	assert.Contains(t, tg.last("sendMessage")["text"], "already proposed")
+	require.NoError(t, b.Tick(ctx))
+	var n int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_posts`).Scan(&n))
+	assert.Equal(t, 2, n, "the slot is held")
+
+	// The next day: a tweet of ours to quote and a statement on the vote.
+	_, err := pool.Exec(ctx, `INSERT INTO x_posts (kind, contradiction_id, person_id, slot, status, chosen, tweet_id, posted_at)
+		VALUES ('contradiction', 1, 1, now(), 'posted', 'Jean Dupont, 60 puis 64.' || E'\n\n@jdupont', '777', $1)`, start)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `WITH src AS (INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type, published_at)
+		VALUES (3, 'https://www.lemonde.fr/y', 'Il faut rendre la parole au peuple par référendum, sans attendre.', 'test', $1) RETURNING id)
+		INSERT INTO fact_mentions (fact_source_id, person_id) SELECT id, 1 FROM src`, start.AddDate(0, 0, -10))
+	require.NoError(t, err)
+	w.reply = Reply{Standard: "Un de plus pour le Tartuffe-Score.", Satirical: "Votez pour votre tartuffe préféré."}
+	b.Now = func() time.Time { return start.Add(24 * time.Hour) }
+	require.NoError(t, b.Tick(ctx))
+	angle, _ = angleOf(4)
+	assert.Equal(t, "quote-tartuffe", angle)
+	assert.Contains(t, w.prompt, "Jean Dupont, 60 puis 64.")
+	assert.NotContains(t, w.prompt, "@jdupont")
+	assert.Contains(t, w.prompt, "Et vous, c'est qui votre tartuffe préféré ?", "the writer is shown what was proposed")
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c2", Data: "p:4:1"}))
+	b.Now = func() time.Time { return start.Add(24*time.Hour + 31*time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	require.Len(t, poster.posted, 1)
+	assert.Equal(t, "777", poster.quoted[0], "posted as a quote of our tweet")
+
+	w.reply = Reply{Standard: "Jean Dupont : « rendre la parole au peuple ». Ici, le vote est ouvert.", Satirical: "Jean Dupont : « rendre la parole au peuple ». Chiche."}
+	b.Now = func() time.Time { return start.Add(30*time.Hour + 45*time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	angle, _ = angleOf(5)
+	assert.Equal(t, "said", angle, "our tweet is quoted once")
+	assert.Contains(t, tg.last("sendMessage")["text"], "jean dupont")
+	var fact int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT fact_id FROM x_posts WHERE id = 5`).Scan(&fact))
+	assert.Equal(t, int64(3), fact)
+
+	w.reply = Reply{Standard: "Molière en aurait fait cinq actes.", Satirical: "Une campagne, toute une distribution."}
+	b.Now = func() time.Time { return start.Add(48 * time.Hour) }
+	require.NoError(t, b.Tick(ctx))
+	angle, _ = angleOf(6)
+	assert.Equal(t, "moliere", angle, "the statement is used once")
 }

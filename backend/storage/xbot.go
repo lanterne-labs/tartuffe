@@ -84,8 +84,10 @@ var (
 // PickBotContradictions chooses up to n contradictions of the candidates for
 // the X bot, one per person: the persons the bot has not drafted on for the
 // longest first (never drafted first, then at random), and for each a
-// contradiction not drafted yet (a skipped draft may come back), not
-// reported, not reviewed false, the ones reviewed real first, then at random.
+// contradiction never drafted (a draft skipped, expired or refused never
+// comes back) nor sharing a fact with one that was (the same story again),
+// not reported, not reviewed false, the ones reviewed real first,
+// then at random.
 // excludePersons leaves those persons out (a page of drafts already holding
 // them).
 func (s *PostgresStorer) PickBotContradictions(ctx context.Context, n int, excludePersons []int64) ([]BotContradiction, error) {
@@ -106,7 +108,10 @@ func (s *PostgresStorer) PickBotContradictions(ctx context.Context, n int, exclu
 				WHERE r.status IN ('pending', 'review', 'accepted')
 				  AND ((r.target_kind = 'contradiction' AND r.target_id = c.id)
 				    OR (r.target_kind = 'fact' AND r.target_id IN (c.fact_a_id, c.fact_b_id))))
-			  AND NOT EXISTS (SELECT 1 FROM x_posts xp WHERE xp.contradiction_id = c.id AND xp.status <> 'skipped')
+			  AND NOT EXISTS (SELECT 1 FROM x_posts xp WHERE xp.contradiction_id = c.id)
+			  AND NOT EXISTS (
+				SELECT 1 FROM x_posts xp JOIN contradictions c2 ON c2.id = xp.contradiction_id
+				WHERE c2.fact_a_id IN (c.fact_a_id, c.fact_b_id) OR c2.fact_b_id IN (c.fact_a_id, c.fact_b_id))
 		), one AS (
 			SELECT DISTINCT ON (person_id) id, person_id, reviewed
 			FROM eligible
@@ -358,9 +363,13 @@ type XPost struct {
 	Slot            time.Time
 	// PostAt is when the tweet goes out: the slot moved by the bot's random
 	// offset (zero at the insert: the slot).
-	PostAt            time.Time
-	Variants          []string
-	Tags              []string
+	PostAt   time.Time
+	Variants []string
+	Tags     []string
+	// Angle is the angle of a tweet on the vote (xbot.VoteAngles; "": none).
+	Angle string
+	// FactID is the fact of a candidate a vote tweet starts from (nil: none).
+	FactID            *int64
 	Chosen            *string
 	Status            string
 	TelegramMessageID *int64
@@ -369,11 +378,11 @@ type XPost struct {
 	CreatedAt         time.Time
 }
 
-const xPostColumns = `id, kind, contradiction_id, COALESCE(person_id, 0), quote_tweet_id, slot, COALESCE(post_at, slot), variants, tags, chosen, status, telegram_message_id, tweet_id, error, created_at`
+const xPostColumns = `id, kind, contradiction_id, COALESCE(person_id, 0), quote_tweet_id, slot, COALESCE(post_at, slot), variants, tags, angle, fact_id, chosen, status, telegram_message_id, tweet_id, error, created_at`
 
 func scanXPost(row pgx.CollectableRow) (XPost, error) {
 	var p XPost
-	err := row.Scan(&p.ID, &p.Kind, &p.ContradictionID, &p.PersonID, &p.QuoteTweetID, &p.Slot, &p.PostAt, &p.Variants, &p.Tags, &p.Chosen, &p.Status,
+	err := row.Scan(&p.ID, &p.Kind, &p.ContradictionID, &p.PersonID, &p.QuoteTweetID, &p.Slot, &p.PostAt, &p.Variants, &p.Tags, &p.Angle, &p.FactID, &p.Chosen, &p.Status,
 		&p.TelegramMessageID, &p.TweetID, &p.Error, &p.CreatedAt)
 	return p, err
 }
@@ -381,7 +390,8 @@ func scanXPost(row pgx.CollectableRow) (XPost, error) {
 // ErrNoXPost is returned when the tweet does not exist.
 var ErrNoXPost = errors.New("no such tweet")
 
-// InsertXPost stores a draft for its slot.
+// InsertXPost stores a draft for its slot, and its versions among the texts
+// the bot proposed (x_post_texts).
 func (s *PostgresStorer) InsertXPost(ctx context.Context, p XPost) (int64, error) {
 	if p.Variants == nil {
 		p.Variants = []string{}
@@ -395,15 +405,177 @@ func (s *PostgresStorer) InsertXPost(ctx context.Context, p XPost) (int64, error
 	if p.PostAt.IsZero() {
 		p.PostAt = p.Slot
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin insert x post: %w", err)
+	}
+	defer tx.Rollback(ctx)
 	var id int64
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO x_posts (kind, contradiction_id, person_id, quote_tweet_id, slot, post_at, variants, tags, status)
-		VALUES ($1, $2, NULLIF($3, 0), $4, $5, $6, $7, $8, 'draft') RETURNING id`,
-		p.Kind, p.ContradictionID, p.PersonID, p.QuoteTweetID, p.Slot, p.PostAt, p.Variants, p.Tags).Scan(&id)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO x_posts (kind, contradiction_id, person_id, quote_tweet_id, slot, post_at, variants, tags, angle, fact_id, status)
+		VALUES ($1, $2, NULLIF($3, 0), $4, $5, $6, $7, $8, $9, $10, 'draft') RETURNING id`,
+		p.Kind, p.ContradictionID, p.PersonID, p.QuoteTweetID, p.Slot, p.PostAt, p.Variants, p.Tags, p.Angle, p.FactID).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert x post: %w", err)
 	}
+	if err := recordXPostTexts(ctx, tx, id, p.Variants); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit insert x post: %w", err)
+	}
 	return id, nil
+}
+
+// recordXPostTexts keeps the texts proposed for a tweet (x_post_texts): the
+// bot never proposes one of them again.
+func recordXPostTexts(ctx context.Context, tx pgx.Tx, postID int64, texts []string) error {
+	if len(texts) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO x_post_texts (post_id, text) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`, postID, texts); err != nil {
+		return fmt.Errorf("x post %d texts: %w", postID, err)
+	}
+	return nil
+}
+
+// XPostTexts returns every text the bot proposed for the tweets of a kind,
+// the newest first, tags and link included. exceptPost leaves the texts of
+// that tweet out (0: none): a rewrite may stay close to its own draft.
+func (s *PostgresStorer) XPostTexts(ctx context.Context, kind string, exceptPost int64) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT t.text FROM x_post_texts t JOIN x_posts p ON p.id = t.post_id
+		WHERE p.kind = $1 AND p.id <> $2 ORDER BY t.id DESC`, kind, exceptPost)
+	if err != nil {
+		return nil, fmt.Errorf("x post texts: %w", err)
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+// VoteAngleUses returns when each angle of the vote tweets was last drafted.
+func (s *PostgresStorer) VoteAngleUses(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.pool.Query(ctx, `SELECT angle, MAX(created_at) FROM x_posts WHERE kind = $1 AND angle <> '' GROUP BY angle`, XPostVote)
+	if err != nil {
+		return nil, fmt.Errorf("vote angle uses: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var angle string
+		var at time.Time
+		if err := rows.Scan(&angle, &at); err != nil {
+			return nil, fmt.Errorf("scan vote angle use: %w", err)
+		}
+		out[angle] = at
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("vote angle uses: %w", err)
+	}
+	return out, nil
+}
+
+// VoteQuoteTarget returns the latest tweet on a contradiction the bot posted
+// since `since` that no vote tweet was drafted as a quote of (whatever became
+// of that draft: a quote proposed once is not proposed again); nil when
+// there is none.
+func (s *PostgresStorer) VoteQuoteTarget(ctx context.Context, since time.Time) (*XPost, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+xPostColumns+` FROM x_posts
+		WHERE kind = $1 AND status = 'posted' AND tweet_id IS NOT NULL AND chosen IS NOT NULL AND posted_at >= $3
+		  AND NOT EXISTS (SELECT 1 FROM x_posts v WHERE v.kind = $2 AND v.quote_tweet_id = x_posts.tweet_id)
+		ORDER BY posted_at DESC LIMIT 1`, XPostContradiction, XPostVote, since)
+	if err != nil {
+		return nil, fmt.Errorf("vote quote target: %w", err)
+	}
+	p, err := pgx.CollectExactlyOneRow(rows, scanXPost)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vote quote target: %w", err)
+	}
+	return &p, nil
+}
+
+// VoteFact is something a candidate said about the vote, democracy or the
+// constitution: the occasion of a vote tweet that takes them at their word.
+type VoteFact struct {
+	BotFact
+	PersonID   int64
+	PersonName string
+}
+
+// VoteFactWords finds, in the quote of a source, the words of a statement on
+// the vote and democracy (a case-insensitive regular expression).
+const VoteFactWords = `(droit de vote|référendum|referendum|démocratie|constitution|abstention|proportionnelle|parole (au|aux) (peuple|français)|vote blanc|les électeurs|suffrage universel|(aller|allez|irai|iront) voter)`
+
+const voteFactSelect = `
+	SELECT f.id, f.fact_text, fs.original_quote, COALESCE(f.statement_date::timestamp AT TIME ZONE 'UTC', fs.published_at),
+	       COALESCE(f.statement_date_precision, ''), fs.source_url, p.id, p.name
+	FROM facts f
+	JOIN fact_sources fs ON fs.fact_id = f.id
+	JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+	JOIN persons p ON p.id = fm.person_id`
+
+func scanVoteFact(row pgx.Row) (*VoteFact, error) {
+	var f VoteFact
+	var url string
+	if err := row.Scan(&f.ID, &f.Text, &f.Quote, &f.Date, &f.DatePrecision, &url, &f.PersonID, &f.PersonName); err != nil {
+		return nil, err
+	}
+	f.Quotes, f.SourceURLs = []string{f.Quote}, []string{url}
+	return &f, nil
+}
+
+// PickVoteFact chooses what a candidate said about the vote or democracy
+// (VoteFactWords in the quote of a source published since `since`) for a
+// vote tweet: a fact no tweet was drafted from, not reported, of the
+// candidate such a tweet was drafted on the longest ago (never first), the
+// latest statement first. Nil when there is none.
+func (s *PostgresStorer) PickVoteFact(ctx context.Context, since time.Time) (*VoteFact, error) {
+	f, err := scanVoteFact(s.pool.QueryRow(ctx, voteFactSelect+`
+		WHERE `+CandidateSQL+` AND p.entity_type = 'human'
+		  AND char_length(fs.original_quote) BETWEEN 40 AND 400
+		  AND fs.original_quote ~* $1 AND fs.published_at >= $2
+		  AND NOT EXISTS (SELECT 1 FROM x_posts xp WHERE xp.fact_id = f.id)
+		  AND NOT EXISTS (SELECT 1 FROM user_reports r WHERE r.target_kind = 'fact' AND r.target_id = f.id
+			AND r.status IN ('pending', 'review', 'accepted'))
+		ORDER BY (SELECT MAX(xp.created_at) FROM x_posts xp WHERE xp.fact_id IS NOT NULL AND xp.person_id = p.id) ASC NULLS FIRST,
+		         fs.published_at DESC
+		LIMIT 1`, VoteFactWords, since))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("pick vote fact: %w", err)
+	}
+	return f, nil
+}
+
+// GetVoteFact loads the fact of a person a vote tweet was drafted from.
+func (s *PostgresStorer) GetVoteFact(ctx context.Context, factID, personID int64) (*VoteFact, error) {
+	f, err := scanVoteFact(s.pool.QueryRow(ctx, voteFactSelect+`
+		WHERE f.id = $1 AND p.id = $2 AND COALESCE(fs.original_quote, '') <> ''
+		ORDER BY (fs.original_quote ~* $3) DESC, fs.published_at DESC NULLS LAST LIMIT 1`, factID, personID, VoteFactWords))
+	if err != nil {
+		return nil, fmt.Errorf("vote fact %d: %w", factID, err)
+	}
+	return f, nil
+}
+
+// XPostByTweetID finds the tweet the bot posted under this id on X.
+func (s *PostgresStorer) XPostByTweetID(ctx context.Context, tweetID string) (*XPost, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+xPostColumns+` FROM x_posts WHERE tweet_id = $1 ORDER BY id DESC LIMIT 1`, tweetID)
+	if err != nil {
+		return nil, fmt.Errorf("x post of tweet %s: %w", tweetID, err)
+	}
+	p, err := pgx.CollectExactlyOneRow(rows, scanXPost)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoXPost
+	}
+	if err != nil {
+		return nil, fmt.Errorf("x post of tweet %s: %w", tweetID, err)
+	}
+	return &p, nil
 }
 
 // GetXPost loads a tweet.
@@ -456,16 +628,6 @@ func (s *PostgresStorer) OpenXPostPersons(ctx context.Context) ([]int64, error) 
 	return pgx.CollectRows(rows, pgx.RowTo[int64])
 }
 
-// CountXPosts counts the tweets of a kind, whatever their status: the vote
-// tweets take their text in turn by it.
-func (s *PostgresStorer) CountXPosts(ctx context.Context, kind string) (int, error) {
-	var n int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM x_posts WHERE kind = $1`, kind).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count x posts: %w", err)
-	}
-	return n, nil
-}
-
 // SetXPostTelegram records the Telegram message that shows the draft.
 func (s *PostgresStorer) SetXPostTelegram(ctx context.Context, id, messageID int64) error {
 	if _, err := s.pool.Exec(ctx, `UPDATE x_posts SET telegram_message_id = $2 WHERE id = $1`, id, messageID); err != nil {
@@ -475,25 +637,58 @@ func (s *PostgresStorer) SetXPostTelegram(ctx context.Context, id, messageID int
 }
 
 // ReviseXPost gives a draft its new versions and the Telegram message that
-// shows them; it returns false when the tweet was no longer a draft.
+// shows them, and keeps the versions among the texts proposed; it returns
+// false when the tweet was no longer a draft.
 func (s *PostgresStorer) ReviseXPost(ctx context.Context, id int64, variants []string, messageID int64) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `UPDATE x_posts SET variants = $2, telegram_message_id = $3 WHERE id = $1 AND status = 'draft'`, id, variants, messageID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin revise x post %d: %w", id, err)
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE x_posts SET variants = $2, telegram_message_id = $3 WHERE id = $1 AND status = 'draft'`, id, variants, messageID)
 	if err != nil {
 		return false, fmt.Errorf("revise x post %d: %w", id, err)
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if err := recordXPostTexts(ctx, tx, id, variants); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit revise x post %d: %w", id, err)
+	}
+	return true, nil
 }
 
 // DecideXPost moves a draft to status (approved with its chosen text,
-// skipped, false); it returns false when the tweet was no longer a draft.
+// skipped, false); it returns false when the tweet was no longer a draft. The
+// chosen text is kept among the texts proposed (it may be the approver's
+// own).
 func (s *PostgresStorer) DecideXPost(ctx context.Context, id int64, status string, chosen *string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin decide x post %d: %w", id, err)
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
 		UPDATE x_posts SET status = $2, chosen = COALESCE($3, chosen), decided_at = now()
 		WHERE id = $1 AND status = 'draft'`, id, status, chosen)
 	if err != nil {
 		return false, fmt.Errorf("decide x post %d: %w", id, err)
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if chosen != nil {
+		if err := recordXPostTexts(ctx, tx, id, []string{*chosen}); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit decide x post %d: %w", id, err)
+	}
+	return true, nil
 }
 
 // DueXPosts returns the approved tweets whose time has come.

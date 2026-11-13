@@ -10,7 +10,8 @@ import (
 
 // TestPickBotContradictions: a candidate's contradiction is picked, the one
 // reviewed real first; a reported, reviewed false or drafted one is left
-// out, a skipped draft comes back; a non-candidate is never picked.
+// out, a skipped draft too, with the pairs that share a fact with it; a
+// non-candidate is never picked.
 func TestPickBotContradictions(t *testing.T) {
 	storer, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -46,13 +47,16 @@ func TestPickBotContradictions(t *testing.T) {
 	assert.True(t, c.Reviewed)
 	assert.Equal(t, f.facts[1], c.A.ID, "the earlier fact first")
 
-	// A draft holds it; a skipped one lets it come back.
+	// A draft holds it, and the pair that shares a fact with it (the same
+	// story again); skipped, it still never comes back.
 	var post int64
 	require.NoError(t, storer.pool.QueryRow(ctx, `INSERT INTO x_posts (contradiction_id, person_id, slot) VALUES ($1, $2, now()) RETURNING id`, second, f.person).Scan(&post))
-	assert.Equal(t, []int64{f.contradiction}, pick())
+	assert.Empty(t, pick())
 	_, err = storer.pool.Exec(ctx, `UPDATE x_posts SET status = 'skipped' WHERE id = $1`, post)
 	require.NoError(t, err)
-	assert.Equal(t, []int64{second}, pick())
+	assert.Empty(t, pick())
+	_, err = storer.pool.Exec(ctx, `DELETE FROM x_posts`)
+	require.NoError(t, err)
 
 	// A report on one of its facts, or a false review, leaves it out.
 	_, err = storer.pool.Exec(ctx, `INSERT INTO user_reports (user_id, target_kind, target_id, person_id, person_name, target_text, reason)

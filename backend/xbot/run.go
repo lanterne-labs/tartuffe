@@ -282,14 +282,18 @@ func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, draf
 }
 
 // Draft writes the tweet of a slot and sends it: the first contradiction
-// with a version that passes the checks, among a few, of a person with no
-// open draft. Nothing to tweet: the slot is left.
+// with a version that passes the checks and was never proposed, among a few,
+// of a person with no open draft. Nothing to tweet: the slot is left.
 func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 	open, err := b.Store.OpenXPostPersons(ctx)
 	if err != nil {
 		return err
 	}
 	picked, err := b.Store.PickBotContradictions(ctx, 3, open)
+	if err != nil {
+		return err
+	}
+	seen, err := Recall(ctx, b.Store, storage.XPostContradiction, 0)
 	if err != nil {
 		return err
 	}
@@ -303,7 +307,7 @@ func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 		if b.Link {
 			link = ContradictionLink(b.Site, c)
 		}
-		d, err := Compose(ctx, b.Writer, c, ChooseTags(pool, MaxTags), link)
+		d, err := Recompose(ctx, b.Writer, c, ChooseTags(pool, MaxTags), link, nil, seen)
 		if err != nil {
 			return err
 		}
@@ -473,7 +477,11 @@ func (b *Bot) revise(ctx context.Context, p *storage.XPost, request string) erro
 	if b.Link {
 		link = ContradictionLink(b.Site, c)
 	}
-	d, err := Recompose(ctx, b.Writer, c, p.Tags, link, &Revision{Previous: p.Variants, Request: request})
+	seen, err := Recall(ctx, b.Store, storage.XPostContradiction, p.ID)
+	if err != nil {
+		return err
+	}
+	d, err := Recompose(ctx, b.Writer, c, p.Tags, link, &Revision{Previous: p.Variants, Request: request}, seen)
 	if errors.Is(err, llm.ErrUnavailable) {
 		log.Warn().Err(err).Int64("post", p.ID).Msg("xbot: LLM unavailable for a revision")
 		return tell("Le modèle n'est pas disponible pour l'instant : le brouillon reste tel quel. Répondez à nouveau plus tard.")
@@ -508,8 +516,8 @@ func (b *Bot) revise(ctx context.Context, p *storage.XPost, request string) erro
 	return nil
 }
 
-// reviseVote is revise for a vote draft: the writer rewrites it from what
-// may be said of the vote (ReviseVote).
+// reviseVote is revise for a vote draft: the writer rewrites it on its
+// angle, from what may be said of the vote (ComposeVote).
 func (b *Bot) reviseVote(ctx context.Context, p *storage.XPost, request string, tell func(string) error) error {
 	if b.Vote == nil {
 		return tell("Pas de vote configuré : le brouillon reste tel quel.")
@@ -521,7 +529,27 @@ func (b *Bot) reviseVote(ctx context.Context, p *storage.XPost, request string, 
 	if v == nil {
 		return tell("Aucun vote n'est ouvert : le brouillon reste tel quel.")
 	}
-	versions, dropped, err := ReviseVote(ctx, b.Writer, v, b.Site, p.Tags, p.Variants, request)
+	seen, err := Recall(ctx, b.Store, storage.XPostVote, p.ID)
+	if err != nil {
+		return err
+	}
+	req := VoteRequest{State: v, Angle: VoteAngleByKey(p.Angle), Site: b.Site, Tags: p.Tags, Seen: seen,
+		Rev: &Revision{Previous: p.Variants, Request: request}}
+	if p.QuoteTweetID != nil {
+		quoted, err := b.Store.XPostByTweetID(ctx, *p.QuoteTweetID)
+		if err != nil {
+			return fmt.Errorf("revise vote post %d: %w", p.ID, err)
+		}
+		if quoted.Chosen != nil {
+			req.Quoted = Body(*quoted.Chosen)
+		}
+	}
+	if p.FactID != nil {
+		if req.Said, err = b.Store.GetVoteFact(ctx, *p.FactID, p.PersonID); err != nil {
+			return fmt.Errorf("revise vote post %d: %w", p.ID, err)
+		}
+	}
+	versions, dropped, err := ComposeVote(ctx, b.Writer, req)
 	if errors.Is(err, llm.ErrUnavailable) {
 		log.Warn().Err(err).Int64("post", p.ID).Msg("xbot: LLM unavailable for a revision")
 		return tell("Le modèle n'est pas disponible pour l'instant : le brouillon reste tel quel. Répondez à nouveau plus tard.")
@@ -533,7 +561,7 @@ func (b *Bot) reviseVote(ctx context.Context, p *storage.XPost, request string, 
 		log.Warn().Int64("post", p.ID).Strs("dropped", dropped).Msg("xbot: no revised version passed the checks")
 		return tell("Aucune nouvelle version n'a passé les contrôles ; le brouillon reste tel quel.\n<pre>" + html.EscapeString(strings.Join(dropped, "\n")) + "</pre>")
 	}
-	msg, err := b.Telegram.Send(ctx, VoteDraftMessage(p.PostAt.In(b.Zone), "Réécrit à votre demande.", versions), voteButtons(p.ID, len(versions)))
+	msg, err := b.Telegram.Send(ctx, VoteDraftMessage(p.PostAt.In(b.Zone), "Réécrit à votre demande.\n"+voteNote(v, req, p.QuoteTweetID), versions), voteButtons(p.ID, len(versions)))
 	if err != nil {
 		return fmt.Errorf("send revised vote draft %d: %w", p.ID, err)
 	}
@@ -579,7 +607,7 @@ func (b *Bot) tap(ctx context.Context, u Update) (string, error) {
 		if _, err := b.Store.DecideXPost(ctx, p.ID, "skipped", nil); err != nil {
 			return "", err
 		}
-		b.closeMessage(ctx, p, "⏭ Passé : la contradiction pourra revenir plus tard.")
+		b.closeMessage(ctx, p, "⏭ Passé : ce tweet ne sera plus proposé.")
 		return "Passé", nil
 	case "f":
 		if _, err := b.Store.DecideXPost(ctx, p.ID, "false", nil); err != nil {
@@ -649,7 +677,9 @@ func (b *Bot) PostDue(ctx context.Context) error {
 			quote = *p.QuoteTweetID
 		}
 		id, err := b.Poster.Post(ctx, *p.Chosen, quote)
-		if errors.Is(err, ErrQuoteRefused) {
+		// A vote tweet that quotes ours comments it: without the quote it
+		// says nothing, so it fails instead.
+		if errors.Is(err, ErrQuoteRefused) && p.Kind != storage.XPostVote {
 			log.Warn().Err(err).Int64("post", p.ID).Msg("xbot: X refused the quote; posting the tweet without it")
 			id, err = b.Poster.Post(ctx, *p.Chosen, "")
 		}
