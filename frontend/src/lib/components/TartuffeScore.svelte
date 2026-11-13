@@ -432,6 +432,9 @@
 		border-color: var(--text-muted);
 	}
 	.tip {
+		/* The score's tabular figures also widen the commas of this font: a
+		   sentence takes the normal ones. */
+		font-variant-numeric: normal;
 		position: absolute;
 		top: calc(100% + 0.4rem);
 		left: 50%;
