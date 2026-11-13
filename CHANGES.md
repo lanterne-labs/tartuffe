@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-13: A daily digest instead of an alert nobody could act on, and « À revoir » on the bot's drafts
+
+- **The digest.** The Grafana alert "No maintenance pass ended for 12 h" fired most days (a pass waits up to 24 h on the worker) and said nothing to do. The worker now sends one Telegram message a day at 08:00 Paris (`backend/digest`, `DIGEST_AT`): the new facts, the new contradictions, the ballots of the vote and those since the last digest, and one line that says « Rien d'urgent » or names what needs someone (a pass stuck for twice `MAINTENANCE_EVERY_HOURS`, the feed missing, failed tasks or tweets, 50 errors or more in the logs). The alert is removed from the provisioning (`deleteRules`); the observability service must be deployed by hand for that.
+- **« À revoir ».** A draft on a contradiction that looks weak had two answers, skip it or call it false. A third button records it `debatable` (reviewer `xbot`), publishes nothing and leaves it on the site: the audit already reviews every debatable contradiction, and now takes these first.
+- **Lesson.** An alert whose threshold is under the normal wait of what it watches fires every day and teaches its reader to ignore the channel. A threshold follows the setting it depends on (here twice `MAINTENANCE_EVERY_HOURS`), not a constant.
+
 ## 2026-11-13: The X bot proposes replies under the candidates' most seen tweets
 
 - **Why.** A tweet of the account is read by its followers; a reply under a tweet that hundreds of thousands read is read by them. The bot cannot post it: X lets an app reply only where it is mentioned (the refusal of 2026-11-12, `ErrQuoteRefused`) and counts automatic replies as spam.

@@ -22,6 +22,10 @@ import (
 // marked false is reviewed false.
 const Reviewer = "xbot"
 
+// ReviewNote is the note of the review recorded when the approver finds a
+// contradiction weak and sends it to the next audit.
+const ReviewNote = "looks weak to the approver of the X bot: review it"
+
 // Clock is a time of day.
 type Clock struct{ Hour, Min int }
 
@@ -362,7 +366,8 @@ func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 	return nil
 }
 
-// draftButtons publishes a version by its label, skips, or marks false.
+// draftButtons publishes a version by its label, skips, sends the
+// contradiction to the next audit, or marks it false.
 func draftButtons(id int64, labels []string) [][]Button {
 	var publish []Button
 	for i, l := range labels {
@@ -370,7 +375,8 @@ func draftButtons(id int64, labels []string) [][]Button {
 	}
 	return [][]Button{publish, {
 		{Text: "⏭ Passer", Data: fmt.Sprintf("s:%d", id)},
-		{Text: "❌ Fausse contradiction", Data: fmt.Sprintf("f:%d", id)},
+		{Text: "🔎 À revoir", Data: fmt.Sprintf("r:%d", id)},
+		{Text: "❌ Fausse", Data: fmt.Sprintf("f:%d", id)},
 	}}
 }
 
@@ -649,6 +655,21 @@ func (b *Bot) tap(ctx context.Context, u Update) (string, error) {
 		}
 		b.closeMessage(ctx, p, "⏭ Passé : ce tweet ne sera plus proposé.")
 		return "Passé", nil
+	case "r":
+		// A contradiction that looks weak: nothing is tweeted, it stays on the
+		// site, and its "debatable" review puts it in the next audit's list
+		// (.claude/skills/audit, "Review the contradictions").
+		if p.ContradictionID == nil {
+			return "", fmt.Errorf("tap data %q: no contradiction to review", u.Data)
+		}
+		if err := b.Store.RecordContradictionReview(ctx, Reviewer, storage.ContradictionReview{ContradictionID: *p.ContradictionID, Verdict: "debatable", Note: ReviewNote}); err != nil {
+			return "", err
+		}
+		if _, err := b.Store.DecideXPost(ctx, p.ID, "skipped", nil); err != nil {
+			return "", err
+		}
+		b.closeMessage(ctx, p, "🔎 À revoir : rien n'est publié, le prochain audit la réexaminera.")
+		return "À revoir", nil
 	case "f":
 		if _, err := b.Store.DecideXPost(ctx, p.ID, "false", nil); err != nil {
 			return "", err

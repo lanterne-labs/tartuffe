@@ -14,6 +14,7 @@ import (
 	"digital-mirror/backend/alerting"
 	"digital-mirror/backend/complaints"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/digest"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/plugins/twitter"
@@ -116,6 +117,8 @@ func runWorker(cmd *cobra.Command, args []string) error {
 		}, worker.ReportsEvery)
 	}
 
+	startDigest(ctx, storer)
+
 	// XBOT_ENABLED=true starts the X bot beside the tasks (backend/xbot): a
 	// draft before each slot on Telegram, a tweet once approved.
 	if on, _ := strconv.ParseBool(os.Getenv("XBOT_ENABLED")); on {
@@ -131,6 +134,52 @@ func runWorker(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return err
+}
+
+// startDigest sends the daily digest on Telegram (backend/digest): the new
+// facts and contradictions, the ballots of the vote, and whether something
+// needs a person. DIGEST_AT is its time of day in Paris (default "08:00";
+// "none": no digest).
+func startDigest(ctx context.Context, storer *storage.PostgresStorer) {
+	at := os.Getenv("DIGEST_AT")
+	if at == "" {
+		at = "08:00"
+	}
+	if at == "none" {
+		return
+	}
+	clock, err := time.Parse("15:04", at)
+	if err != nil {
+		log.Error().Err(err).Str("DIGEST_AT", at).Msg("Worker: no daily digest: want a time of day (08:00)")
+		return
+	}
+	notifier := alerting.NewTelegramNotifierFromEnv()
+	if notifier == nil {
+		log.Warn().Msg("Worker: no Telegram bot (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID): no daily digest")
+		return
+	}
+	zone, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		log.Error().Err(err).Msg("Worker: no daily digest: time zone")
+		return
+	}
+	errs := &digest.ErrorCounter{}
+	log.Logger = log.Logger.Hook(errs)
+	d := &digest.Digest{Store: storage.NewDigestStore(storer), Send: notifier.Send, Hour: clock.Hour(), Min: clock.Minute(), Zone: zone,
+		MaintenanceEvery: worker.MaintenanceEvery(), Errors: errs, Now: time.Now}
+	vote, err := botVote(polls.NewPGStore(storer.Pool()))
+	if err != nil {
+		log.Error().Err(err).Msg("Worker: the digest has no vote line")
+	} else if vote != nil {
+		d.Ballots = func(ctx context.Context) (int, bool, error) {
+			v, err := vote(ctx, time.Now())
+			if err != nil || v == nil {
+				return 0, false, err
+			}
+			return v.Counted, true, nil
+		}
+	}
+	go d.Run(ctx)
 }
 
 // startXBot runs the X bot until ctx ends. The blackouts of the poll events
