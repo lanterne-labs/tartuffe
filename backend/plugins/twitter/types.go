@@ -15,6 +15,11 @@ type Tweet struct {
 	Lang         string
 	CreatedAt    *time.Time
 	IsRetweet    bool
+	// IsReply, Views and Likes are what the API says of the tweet's reach
+	// (0 when it gives none).
+	IsReply bool
+	Views   int
+	Likes   int
 }
 
 // TweetFetcher fetches tweets from an external API.

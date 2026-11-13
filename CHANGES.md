@@ -2,6 +2,14 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-13: The X bot proposes replies under the candidates' most seen tweets
+
+- **Why.** A tweet of the account is read by its followers; a reply under a tweet that hundreds of thousands read is read by them. The bot cannot post it: X lets an app reply only where it is mentioned (the refusal of 2026-11-12, `ErrQuoteRefused`) and counts automatic replies as spam.
+- **What.** An hour before each reply slot (`XBOT_REPLY_SLOTS`, default 09:30, 14:00, 19:30 Paris) the bot reads the candidates' own tweets of the last day (one twitterapi.io search, 40 tweets at most, 150 likes or more), takes the most seen and asks the LLM which contradiction of that candidate is about the very subject of the tweet; none, and the tweet is left. It writes two versions, the funny one first, and the Telegram draft has a button per version that opens X on the reply already written: the person sends it by hand. `backend/xbot/reply.go`, `storage/xbot_replies.go`, tables `x_reply_targets` and `x_posts` of kind `reply`.
+- **Cost.** At most 120 tweets read a day and 4 LLM calls per slot on the seats; a reply posted by hand costs nothing.
+- **Not verified.** The reach fields of twitterapi.io (`viewCount`, `likeCount`, `isReply`) are read as its documentation names them; no stored response had them. Without views the tweets rank by likes, and the draft shows no view count.
+- **Lesson (the same day).** Production had recorded the version of `20261113100000` from an earlier form of the file, without `fact_id`, and the bot failed every minute after the deploy until `20261113110000` added the columns again. A migration file still being written must not reach a deploy of the working directory; after a deploy with a migration, read the worker's log for the first tick.
+
 ## 2026-11-13: The X bot never repeats a tweet, never gives the count of the vote, and calls to vote from many angles
 
 - **No count in a tweet.** The vote tweet ended with « Déjà N bulletins » once the event showed its results, and the Telegram draft led with the count, so a draft read « déjà 2 votes ». A tweet now never gives a number of votes, exact or rounded: the writer is not told the count, the prompt forbids it, and a version with a number other than the year or the ballot's size is dropped (`checkVoteText`). The count stays in the Telegram draft, marked as for the approver alone.
