@@ -15,6 +15,7 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
+	"digital-mirror/backend/search"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,6 +52,79 @@ func TestCollectHandlesStopsOnUnavailableLLM(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, llm.ErrUnavailable)
 	assert.Equal(t, []string{"a", "b"}, called)
+}
+
+// TestCollectHandlesStopsOnExhaustedCredits: the API's credits ran out, so
+// the handle loop stops and the error keeps its marker: the worker lets the
+// task wait instead of counting a failed attempt.
+func TestCollectHandlesStopsOnExhaustedCredits(t *testing.T) {
+	handles := []Handle{{Handle: "a", PersonID: 1}, {Handle: "b", PersonID: 2}, {Handle: "c", PersonID: 3}}
+	var called []string
+	stats, err := collectHandles(context.Background(), handles, []int64{1, 2, 3}, func(_ context.Context, h Handle) (*Result, error) {
+		called = append(called, h.Handle)
+		if h.Handle == "b" {
+			return nil, fmt.Errorf("window 1/3: %w", search.ErrQuota)
+		}
+		return &Result{}, nil
+	})
+	require.ErrorIs(t, err, search.ErrQuota)
+	assert.Equal(t, []string{"a", "b"}, called, "no handle after the credits ran out")
+	assert.Equal(t, []int64{1}, stats.Done, "the handle refused for the credits is not done")
+}
+
+// roundTrip answers every request of an http.Client.
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestFetchTweetsMarksExhaustedCredits: a 402 of twitterapi.io is the quota
+// marker; another status is a plain failure.
+func TestFetchTweetsMarksExhaustedCredits(t *testing.T) {
+	status := http.StatusPaymentRequired
+	f := &TwitterAPIIOFetcher{apiKey: "k", client: &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		rec := httptest.NewRecorder()
+		rec.WriteHeader(status)
+		_, _ = rec.WriteString(`{"error":"Unauthorized","message":"Credits is not enough. Please recharge"}`)
+		return rec.Result(), nil
+	})}}
+	_, err := f.FetchTweets(context.Background(), "from:jeanfenetre", FetchOptions{})
+	require.ErrorIs(t, err, search.ErrQuota)
+
+	status = http.StatusInternalServerError
+	_, err = f.FetchTweets(context.Background(), "from:jeanfenetre", FetchOptions{})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, search.ErrQuota)
+}
+
+// quotaFetcher refuses every fetch for the credits and counts them.
+type quotaFetcher struct{ calls int }
+
+func (f *quotaFetcher) FetchTweets(context.Context, string, FetchOptions) ([]Tweet, error) {
+	f.calls++
+	return nil, fmt.Errorf("failed to fetch tweets page: %w", search.ErrQuota)
+}
+
+// TestWindowedCollectionStopsOnExhaustedCredits: a window the API refuses for
+// its credits stops the windowed collection (the next windows would be
+// refused too) and the error keeps its marker.
+func TestWindowedCollectionStopsOnExhaustedCredits(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	_, err := storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	store := NewStore(storer)
+	personID, err := storer.FindOrInsertPersonWithType(ctx, "jean fenetre", "human")
+	require.NoError(t, err)
+	require.NoError(t, store.AddHandle(ctx, personID, "jeanfenetre"))
+	handles, err := store.GetHandlesByPersonID(ctx, personID)
+	require.NoError(t, err)
+
+	fetcher := &quotaFetcher{}
+	p := &Provider{Fetcher: fetcher, Storer: storer, Store: store}
+	from, to := time.Now().AddDate(0, 0, -9), time.Now()
+	_, err = p.CollectFactsWithDateWindows(ctx, handles[0], Options{DateFrom: &from, DateTo: &to, WindowDays: 3, Force: true})
+	require.ErrorIs(t, err, search.ErrQuota)
+	assert.Equal(t, 1, fetcher.calls, "only the first window is asked")
 }
 
 // TestCollectHandlesStopsAtDeadline: an expired context fetches no handle; a

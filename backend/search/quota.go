@@ -7,7 +7,8 @@ import (
 )
 
 // ErrQuota marks a search the provider refused for its quota or its rate
-// (Serper "Not enough credits", Brave's open circuit, SerpAPI 429). The search
+// (Serper "Not enough credits", Brave's open circuit, SerpAPI 429; the tweet
+// search of twitterapi.io answers 402 when its credits ran out). The search
 // was not made: the caller waits for the quota instead of taking the period
 // as searched or failed.
 var ErrQuota = errors.New("search quota exhausted")
