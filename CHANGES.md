@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-13: The repository is `lanterne-labs/tartuffe`
+
+The repository was recreated under a new name, `lanterne-labs/tartuffe` (it was `mirror`), with the same code and a rewritten history; `lanterne-labs/isoloir` was recreated the same way under its name. Every commit id changed: an id quoted in an older note or message names a commit of the old history. The site's two links to the code follow. The host receives the code by upload and does not read GitHub, so nothing changed there; the deploy workflow reads its commands and its token from repository secrets (`DEPLOY_SCRIPT`, `DEPLOY_TOKEN_NAME`, `DEPLOY_TOKEN`).
+
+- **Lesson.** A new clone of one of our repositories commits with the machine's global git identity until it is told otherwise: set `user.name` and `user.email` in the clone (a submodule included) before the first commit. A history rewrite does not reach the commits GitHub keeps for each pull request; only a new repository does.
+
 ## 2026-11-13: The collection reaches further back; a twitter task waits when the tweet credits run out
 
 - **State found.** The daily feed is right: the votes and the transcripts of the day at 03:00 UTC (about 1 500 ballots a day), then one task per candidate and period plugin for the day before. But nothing reached further back by itself: the backfills were batches added by hand, all ended (tweets from 2023-10-01, news from 2021-10-01).

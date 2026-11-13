@@ -350,6 +350,10 @@ The Grafana dashboard **Operations** (`operations.json`) shows where each long o
 - The LLM usage of each feed and each maintenance pass: rows of `job_metrics` under the job `llm_usage` (target `endpoint/task/model`; metrics `calls`, `failed`, `input_tokens`, `cache_write_tokens`, `cache_read_tokens`, `output_tokens`, `thinking_tokens`, `cost_usd`, at list price). The worker also logs the cumulative report (`LLM usage of the process`).
 - A collection batch is named at its creation: `dm collect add "Name" --from 2024-10-01 --operation "backfill 2y"`. Its progress is its tasks (`collection_tasks.operation`).
 
+## The repository and the git identity
+
+The repository is `lanterne-labs/tartuffe` (named `mirror` until 2026-11-13; the Go module and the host's services keep their names). Every commit is authored as Lanterne Labs: a new clone, a worktree or a submodule checkout of any `lanterne-labs` repository gets `git config user.name "Lanterne Labs"` and the organisation's noreply address as `user.email` **before its first commit**. Nothing public may name a person: not a file, a commit author, a message, a pull request.
+
 ## Development Status
 
 **Nothing is in production yet.** Don't worry about backward compatibility - if something breaks, fix it. This is pre-production development.
