@@ -9,6 +9,7 @@ import (
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
+	"digital-mirror/backend/search"
 
 	"github.com/rs/zerolog/log"
 )
@@ -120,8 +121,9 @@ func withoutHandle(targets []plugins.Target, handles []Handle) []string {
 // handle is recorded and the loop goes on, except on an unreachable LLM
 // (llm.ErrUnavailable): every further handle would fetch tweets (API credits)
 // only to leave them unextracted, so the loop stops and returns it with the
-// first failure; so does a cancelled ctx, the cut handle not counted as
-// failed. Otherwise the first failure is returned. stats.Done lists the
+// first failure; so do the API's credits run out (search.ErrQuota: no later
+// handle is served, and the worker lets the task wait for them) and a
+// cancelled ctx, the cut handle not counted as failed. Otherwise the first failure is returned. stats.Done lists the
 // targets whose every handle was collected or failed before the stop.
 func collectHandles(ctx context.Context, handles []Handle, targetIDs []int64, collect func(context.Context, Handle) (*Result, error)) (plugins.IngestStats, error) {
 	var stats plugins.IngestStats
@@ -162,7 +164,9 @@ func collectHandles(ctx context.Context, handles []Handle, targetIDs []int64, co
 		if err != nil {
 			log.Error().Err(err).Str("handle", h.Handle).Msg("twitter: collection failed for handle")
 			stats.Details = append(stats.Details, "@"+h.Handle+": "+err.Error())
-			if errors.Is(err, llm.ErrUnavailable) {
+			if errors.Is(err, llm.ErrUnavailable) || errors.Is(err, search.ErrQuota) {
+				// The LLM is down or the API's credits ran out: no later
+				// handle is served either.
 				stats.Done = done()
 				return stats, errors.Join(firstErr, err)
 			}

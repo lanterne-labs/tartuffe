@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/search"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -178,6 +180,12 @@ func (f *TwitterAPIIOFetcher) fetchPage(ctx context.Context, query, cursor strin
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusPaymentRequired {
+			// The credits of the account ran out (2026-11-03): no tweet was
+			// read, and no later request is served either. The marker makes
+			// the task wait for the credits instead of failing its windows.
+			return nil, fmt.Errorf("%w: twitterapi.io returned status %d: %s", search.ErrQuota, resp.StatusCode, string(body))
+		}
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 

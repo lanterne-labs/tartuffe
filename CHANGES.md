@@ -2,6 +2,14 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-13: The collection reaches further back; a twitter task waits when the tweet credits run out
+
+- **State found.** The daily feed is right: the votes and the transcripts of the day at 03:00 UTC (about 1 500 ballots a day), then one task per candidate and period plugin for the day before. But nothing reached further back by itself: the backfills were batches added by hand, all ended (tweets from 2023-10-01, news from 2021-10-01).
+- **What (data).** 192 tasks, operation `backfill deep: back to 2016`: one per candidate, plugin and year, tweets from 2023-10 back to 2016-10 and news from 2021-10 back to 2016-10. The newest year has the highest priority (20, then 19, ...), so the worker walks back in time for everyone at once, after the watch list (50). To go further, add the next years the same way with lower priorities.
+- **What (code).** twitterapi.io answers 402 when its credits ran out. A twitter task then failed its windows one by one, used its 3 attempts and failed for good, with one Telegram alert each. The 402 now carries `search.ErrQuota`: the collection stops at that window, extracts the tweets already stored, and the worker lets the task wait 6 h without counting an attempt, as for the news searches.
+- **Lesson.** The old news is thin: a 3-day window gives 56 results in 2026, 16 in 2024 and 3 in 2022. A year of news further back costs 122 searches per candidate for a few hundred articles. The tweets do not thin out, but each costs credits: about 118 000 tweets for the 3 years read so far.
+- **Not done.** The votes are those of the current legislature only (since 2024): three candidates have ballots (Le Pen, Attal, Ruffin). The earlier mandates (legislatures 14 to 16: Mélenchon, Roussel, Dupont-Aignan, Philippe, Bertrand, Le Pen, Ruffin) are not read; `dm plugin frpolitics --mode votes --legislatures 16` does it for every deputy of that legislature. While collection tasks are pending, the feed's backfill of the old transcripts waits (15 157 documents, 62 of the candidates).
+
 ## 2026-11-13: The audit keeps its state in the database
 
 Also: **the bot's Telegram drafts carry no context.** A contradiction draft listed the two facts, their quotes, their sources and the reason above the versions; the approver read all that instead of the tweet. It is now the person, the time, a link to the site and the two versions (a reply draft: the tweet answered and the two versions). A tweet that needs the context to be understood is not a good tweet, and « À revoir » is there for a contradiction that looks weak.

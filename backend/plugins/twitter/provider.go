@@ -9,6 +9,7 @@ import (
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
+	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 	"errors"
@@ -495,6 +496,8 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle Handl
 		PersonName: handle.PersonName,
 	}
 
+	// quotaErr is set when the API refused a window for its credits.
+	var quotaErr error
 	for i, w := range windows {
 		select {
 		case <-ctx.Done():
@@ -531,6 +534,16 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle Handl
 			return aggregate, fmt.Errorf("window %d/%d (%s to %s): %w",
 				i+1, len(windows), w.from.Format("2006-01-02"), w.to.Format("2006-01-02"), err)
 		}
+		if errors.Is(err, search.ErrQuota) {
+			// The API's credits ran out: no later window is served either.
+			// The tweets already stored are still extracted below, then the
+			// error goes up with its marker, so the task waits for the
+			// credits instead of failing its windows one by one.
+			quotaErr = fmt.Errorf("window %d/%d (%s to %s): %w",
+				i+1, len(windows), w.from.Format("2006-01-02"), w.to.Format("2006-01-02"), err)
+			aggregate.Errors = append(aggregate.Errors, quotaErr)
+			break
+		}
 		if err != nil {
 			log.Error().Err(err).
 				Str("handle", handle.Handle).
@@ -550,8 +563,11 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle Handl
 			batchSize = defaultBatchSize
 		}
 		if err := p.extractLeftovers(ctx, handle, batchSize, opts, aggregate, nil); err != nil {
-			return aggregate, err
+			return aggregate, errors.Join(quotaErr, err)
 		}
+	}
+	if quotaErr != nil {
+		return aggregate, quotaErr
 	}
 
 	log.Info().
