@@ -301,6 +301,7 @@ func replyButtons(id int64, t *storage.ReplyTarget, d *Draft) [][]Button {
 	return [][]Button{open, {
 		{Text: "✅ C'est envoyé", Data: fmt.Sprintf("d:%d", id)},
 		{Text: "⏭ Passer", Data: fmt.Sprintf("s:%d", id)},
+		{Text: "🔎 À revoir", Data: fmt.Sprintf("r:%d", id)},
 	}}
 }
 

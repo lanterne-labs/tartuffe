@@ -16,6 +16,14 @@ policies:
     group_interval: 30m
     repeat_interval: 12h
 
+# The alert "No maintenance pass ended for 12 h" fired most days (a pass
+# waits up to MAINTENANCE_EVERY_HOURS, 24 on the worker) and told nothing to
+# act on: the worker's daily digest (backend/digest) now says when a pass is
+# stuck.
+deleteRules:
+  - orgId: 1
+    uid: worker-maintenance-stale
+
 groups:
   - orgId: 1
     name: worker
@@ -56,73 +64,3 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: The feed of today has not ended. The worker runs it when no task is pending; a task or a maintenance pass that does not end holds it.
-      # A pass judges at most detectBudget pairs (about 2 h) and records a
-      # row at its end; 12 h without one is a pass that does not end, or a
-      # worker that does not get to it.
-      - uid: worker-maintenance-stale
-        title: No maintenance pass ended for 12 h
-        condition: C
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: mirrordb
-            model:
-              refId: A
-              format: table
-              rawQuery: true
-              editorMode: code
-              rawSql: |
-                SELECT extract(epoch FROM now() - coalesce(max(created_at), 'epoch'::timestamptz)) / 3600 AS hours_since_pass
-                FROM job_metrics WHERE job_type = 'maintenance' AND metric = 'duration_seconds'
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: A
-              conditions:
-                - evaluator: {type: gt, params: [12]}
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 0s
-        labels: {severity: warning}
-        annotations:
-          summary: No maintenance pass recorded its end for 12 h. Look at the worker logs (host logs --service worker).
-      # A task that fetched items and stored no fact is an extraction that
-      # did not run: on 2026-11-09 the API's credit ran out, 102 Twitter
-      # tasks ended "done" with 30 facts in all, and it was found a day
-      # later by chance. A normal day has 0 to 8 such tasks (a handle with
-      # only retweets, a search of known pages); an outage makes dozens in
-      # a few hours.
-      - uid: worker-tasks-without-facts
-        title: Collection tasks ending without facts
-        condition: C
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: mirrordb
-            model:
-              refId: A
-              format: table
-              rawQuery: true
-              editorMode: code
-              rawSql: |
-                SELECT count(*) AS tasks_without_facts
-                FROM collection_tasks
-                WHERE status = 'done' AND items > 0 AND facts = 0
-                  AND plugin IN ('news', 'twitter')
-                  AND finished_at >= now() - interval '6 hours'
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: A
-              conditions:
-                - evaluator: {type: gt, params: [9]}
-        noDataState: OK
-        execErrState: Alerting
-        for: 0s
-        labels: {severity: warning}
-        annotations:
-          summary: More than 9 news or twitter tasks ended in the last 6 h with items fetched and no fact stored. The extraction is not running (an LLM outage, a parser) and the documents lose their attempts. Check the worker logs and the failed documents (dm documents retry --match <error>).

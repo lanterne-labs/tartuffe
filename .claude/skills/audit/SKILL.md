@@ -215,7 +215,7 @@ ran and produced nothing is a bug until explained.
 ## 2. Review the contradictions
 
 Take every contradiction with no review, every one whose last verdict is
-`debatable` (a rule added since may settle it), and the history slice: the 40
+`debatable` (a rule added since may settle it; the ones reviewed by `xbot` with the note "looks weak to the approver of the X bot" are the user's own doubts from Telegram: review them first and tell the user the verdict of each), and the history slice: the 40
 rows whose latest review is the oldest, `real` ones included (a rule added
 since may show one is false, and a fact behind it may have been wrongly
 extracted). Dump them with their facts, dates and every source quote: (a detail missing from the quote may be in the article: read `source_documents.content` before calling a fact wrong, 2374)

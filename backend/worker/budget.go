@@ -55,6 +55,16 @@ func maintenanceEveryFromEnv() (time.Duration, error) {
 	return time.Duration(v * float64(time.Hour)), nil
 }
 
+// MaintenanceEvery is MAINTENANCE_EVERY_HOURS as the worker reads it (the
+// default when it is unset or wrong): the daily digest calls a pass stuck
+// from it.
+func MaintenanceEvery() time.Duration {
+	if v, err := maintenanceEveryFromEnv(); err == nil {
+		return v
+	}
+	return defaultMaintenanceEvery
+}
+
 // rejudgeBudgetFromEnv reads DETECT_REJUDGE_BUDGET: how many stale negative
 // pair verdicts (a NO under an older rulebook hash) a maintenance pass
 // re-opens for the detector. Not set: defaultRejudgeBudget, none. A rulebook
