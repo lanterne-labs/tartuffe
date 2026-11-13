@@ -1327,3 +1327,38 @@ cases:
     notes: "A tax on multinationals is a levy for the State, not a penalty with a nickname: the absolute pledge is broken. The twin of FP_2455. Prod 2366, reviewed real."
     date_a: "2025-11-05"
     date_b: "2025-06-16"
+
+  # ---- What a party's investiture should do is not what the person does themself.
+  - name: "FP_2449_lisnard_party_label_vs_personal_backing"
+    fact_a: "David Lisnard, maire de Cannes, a apporté son soutien à Eric Ciotti, candidat à Nice pour les municipales de 2026."
+    fact_b: "David Lisnard a estimé que Les Républicains ne devaient soutenir ni Christian Estrosi ni Eric Ciotti à Nice, tous deux ayant quitté le parti, et a écrit à Bruno Retailleau sa désapprobation du soutien de LR à Christian Estrosi."
+    claimed_reason: "Il estime en décembre 2025 qu'on ne devait pas soutenir Ciotti à Nice car il a quitté LR, puis apporte lui-même son soutien à Ciotti en janvier 2026."
+    expect: drop
+    bucket: different_subjects
+    notes: "fact_b carries the article's sentence (Nice-Matin, 20 Dec 2025) the stored fact left out: it is about LR's investiture, decided without the commission he sits on. His personal support is another act. Prod 2449 (2026-11-13)."
+    date_a: "2026-01-23"
+    date_b: "2025-12-19"
+
+  # ---- A journalist's verb for the person's state of mind is not the person's quote.
+  - name: "FP_2446_melenchon_journalist_word_reve_matignon"
+    fact_a: "Jean-Luc Mélenchon a dit à trois lycéennes, le 12 mai 2022, qu'il rêvait de briguer Matignon avec la Nupes en vue des législatives."
+    fact_b: "Jean-Luc Mélenchon a déclaré rêver de toutes sortes de choses, sauf d'argent et de Matignon."
+    claimed_reason: "Il affirme ne pas rêver de Matignon alors qu'il avait dit trois semaines plus tôt en rêver."
+    expect: drop
+    bucket: third_party_narrative
+    also_a: ["Le Point : « lui rêve encore de briguer Matignon avec la Nupes qui se construit en vue des législatives. C'est ce qu'il dit à trois lycéennes croisées dans la rue ce 12 mai »"]
+    notes: "« Rêve » is Le Point's verb; in June 2022 he campaigns openly to be Prime Minister and answers the word with a quip. Prod 2446 (2026-11-13)."
+    date_a: "2022-05-12"
+    date_b: "2022-06-01"
+
+  # ---- His own term of five years and a single seven-year term put to a referendum for after are one plan.
+  - name: "FP_2453_bertrand_five_years_then_septennat"
+    fact_a: "Xavier Bertrand a annoncé que, s'il est élu, sa mission ne durerait que cinq ans via la proposition d'un septennat unique par référendum."
+    fact_b: "Xavier Bertrand a déclaré croire profondément à la logique d'un mandat présidentiel unique de cinq ans."
+    claimed_reason: "Il défend en juin 2026 un mandat unique de cinq ans, puis propose en août 2026 de revenir au septennat, sans expliquer ce changement."
+    expect: drop
+    bucket: complementary_facts
+    judges: ["verify"]
+    notes: "Both say his own mandate would be a single term of five years; the septennat is the rule he would put to a referendum for his successors. The auditor answers ambiguous (it cannot tell whom the septennat is for), a defensible reading: verify only. Prod 2453 (2026-11-13)."
+    date_a: "2026-08-03"
+    date_b: "2026-06-01"

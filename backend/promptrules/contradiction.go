@@ -59,6 +59,8 @@ A breaker does NOT invalidate a promise when:
 - SELF-POSITIONING: « ne pas se situer vis-à-vis de X » says how the person defines themself, not what they think of X: a judgement of X is no denial of it.
 - SELF-CORRECTION: a factual claim the person corrects within days, saying so (« nulle part » then « vu, page 70 »), is a correction, not a reversal.
 - PENALTY NICKNAMED A TAX: a fine or a penalty on a behaviour that the press calls a « taxe » (the « taxe lapin » on missed medical appointments, paid to the doctor) is not a tax rise: wanting it does not break a pledge of no tax increase. A new or higher levy that funds the State (a tax on profits, a VAT rise) does.
+- PARTY LABEL vs PERSONAL BACKING: saying a party should back neither of two candidates is about the party's investiture; the person's own personal support for one of them is not the thing refused.
+- A JOURNALIST'S WORD: a verb the journalist chose for the person's state of mind (« il rêve de Matignon ») is not the person's quote; the person rejecting that word while pursuing the plan openly denies the wording, not the plan.
 - WHOSE PROPOSAL: « ce n'est pas une position que nous défendons » said of a measure the person still wants implemented marks it as another's proposal, not a refusal of it.
 - DEADLINE MOVED: a deadline the person moves themself before it passed, with no act and no denial (« fin de l'année » then « fin mai » days later), is a pledge replaced, not broken, until the term passes unkept.
 - PLEA BEFORE THE VERDICT: a defence plea made during the trial (« bonne foi », « pas de système ») is a stage before the judgement, not a claim against it; only a claim made after the conviction contradicts it.
