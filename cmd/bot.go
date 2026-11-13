@@ -66,14 +66,51 @@ var botDraftCmd = &cobra.Command{
 				fmt.Println("no open featured vote: no vote tweet")
 				return nil
 			}
-			n, err := store.CountXPosts(ctx, storage.XPostVote)
+			writer, err := xbot.NewLLMWriterFromEnv()
+			if err != nil {
+				return fmt.Errorf("init LLM: %w", err)
+			}
+			used, err := store.VoteAngleUses(ctx)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s: %d ballots counted (results may be tweeted from %d)\n", v.Slug, v.Counted, xbot.StandingsFrom)
-			for i := 0; i < botDraftN; i++ {
-				t := xbot.VoteTweet(v, n+i, botDraftSite, nil)
-				fmt.Printf("--- (%d chars)\n%s\n", xbot.Length(t), t)
+			target, err := store.VoteQuoteTarget(ctx, time.Now().Add(-xbot.VoteQuoteWindow))
+			if err != nil {
+				return err
+			}
+			said, err := store.PickVoteFact(ctx, time.Now().Add(-xbot.VoteSaidWindow))
+			if err != nil {
+				return err
+			}
+			seen, err := xbot.Recall(ctx, store, storage.XPostVote, 0)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s: %d ballots counted (never told in a tweet; results may be tweeted from %d)\n", v.Slug, v.Counted, xbot.StandingsFrom)
+			for i, angle := range xbot.PickVoteAngles(used, v, time.Now(), target != nil, said != nil) {
+				if i == botDraftN {
+					break
+				}
+				req := xbot.VoteRequest{State: v, Angle: angle, Site: botDraftSite, Seen: seen}
+				fmt.Printf("\n=== angle %s (%s)\n", angle.Key, angle.Label)
+				if angle.Quote {
+					req.Quoted = xbot.Body(*target.Chosen)
+					fmt.Printf("quotes https://x.com/i/status/%s: %s\n", *target.TweetID, req.Quoted)
+				}
+				if angle.Said {
+					req.Said = said
+					fmt.Printf("%s said (%s): %q\n", said.PersonName, said.DateFR(), said.Quote)
+				}
+				versions, dropped, err := xbot.ComposeVote(ctx, writer, req)
+				if err != nil {
+					return err
+				}
+				for _, t := range versions {
+					fmt.Printf("--- (%d chars)\n%s\n", xbot.Length(t), t)
+				}
+				for _, why := range dropped {
+					fmt.Printf("--- dropped: %s\n", why)
+				}
 			}
 			return nil
 		}
@@ -328,7 +365,7 @@ func init() {
 	botDraftCmd.Flags().IntVar(&botDraftN, "n", 5, "how many drafts (one per person)")
 	botDraftCmd.Flags().Int64Var(&botDraftID, "contradiction", 0, "draft this contradiction instead of choosing")
 	botDraftCmd.Flags().BoolVar(&botDraftLink, "link", false, "add the contradiction's link (X bills a tweet with a link more)")
-	botDraftCmd.Flags().BoolVar(&botDraftVote, "vote", false, "show the next tweets on the vote instead (--n of them; needs XBOT_VOTE_POLLS)")
+	botDraftCmd.Flags().BoolVar(&botDraftVote, "vote", false, "show tweets on the vote instead, one per angle in the order they come (--n of them; needs XBOT_VOTE_POLLS)")
 	botDraftCmd.Flags().BoolVar(&botDraftTG, "telegram", false, "also send each draft to Telegram as a preview (no buttons, nothing saved)")
 	botDraftCmd.Flags().StringVar(&botDraftSite, "site", "https://tartuffe.me", "the site of the links")
 	botAccountsListCmd.Flags().StringVar(&botAccountsStatus, "status", "", "suggested, approved or refused (default all)")
