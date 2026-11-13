@@ -138,6 +138,9 @@ func TestBotFlow(t *testing.T) {
 	msg := tg.last("sendMessage")
 	require.NotNil(t, msg, "a draft is sent an hour before noon")
 	assert.Contains(t, msg["text"], "<b>Satirique</b>")
+	for _, context := range []string{"Fait 1", "Pourquoi", "source 1", "Pour d'autres versions"} {
+		assert.NotContains(t, msg["text"], context, "the draft is the versions, no context")
+	}
 	assert.Contains(t, msg["text"], "@jdupont @lemondefr")
 	require.NoError(t, b.Tick(ctx))
 	var drafts int
@@ -558,7 +561,8 @@ func TestBotReply(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("(from:jdupont) -filter:replies since_time:%d", start.Add(-24*time.Hour).Unix()), query)
 	msg := tg.last("sendMessage")
 	text := msg["text"].(string)
-	assert.Contains(t, text, "Réponse à proposer")
+	assert.Contains(t, text, "Réponse à jean dupont")
+	assert.NotContains(t, text, "Fait 1", "no context: the tweet and the versions")
 	assert.Contains(t, text, "250 000 vues")
 	assert.Contains(t, text, "je n&#39;ai jamais varié", "the most seen tweet of the candidate")
 	assert.Less(t, strings.Index(text, "sauf de 60 à 64"), strings.Index(text, "Jamais varié ?"), "the funny version first")

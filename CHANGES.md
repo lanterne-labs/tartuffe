@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-13: The audit keeps its state in the database
+
+Also: **the bot's Telegram drafts carry no context.** A contradiction draft listed the two facts, their quotes, their sources and the reason above the versions; the approver read all that instead of the tweet. It is now the person, the time, a link to the site and the two versions (a reply draft: the tweet answered and the two versions). A tweet that needs the context to be understood is not a good tweet, and « À revoir » is there for a contradiction that looks weak.
+
+The audit skill kept its cursor in the history and the numbers of its last run in bd, which lives on one machine: a run from another machine started again from the newest ids and had nothing to compare with. They are now two rows of `audit_state` (`.claude/skills/audit/scripts/audit_state.sh get|set cursor|last-run`). A new machine needs the checkout, its `CLAUDE.local.md` and the tools; nothing else of the audit lives on a machine.
+
 ## 2026-11-13: A daily digest instead of an alert nobody could act on, and « À revoir » on the bot's drafts
 
 - **The digest.** The Grafana alert "No maintenance pass ended for 12 h" fired most days (a pass waits up to 24 h on the worker) and said nothing to do. The worker now sends one Telegram message a day at 08:00 Paris (`backend/digest`, `DIGEST_AT`): the new facts, the new contradictions, the ballots of the vote and those since the last digest, and one line that says « Rien d'urgent » or names what needs someone (a pass stuck for twice `MAINTENANCE_EVERY_HOURS`, the feed missing, failed tasks or tweets, 50 errors or more in the logs). The alert is removed from the provisioning (`deleteRules`); the observability service must be deployed by hand for that.

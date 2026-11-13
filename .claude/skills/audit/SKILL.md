@@ -60,11 +60,12 @@ while they run, and report when each one ends.
 ## Setup
 
 ```bash
-cd ~/prog/mirror && git checkout main && git pull --rebase
+cd <the mirror checkout> && git checkout main && git pull --rebase
 export DBURL="$(host variables --service postgres --kv | grep '^DATABASE_PUBLIC_URL=' | cut -d= -f2-)"
 go build -o dm .
 ```
 
+- On a new machine: the checkout needs its `CLAUDE.local.md` (never committed: it says what `host` is and gives the service ids; copy it from another machine), the host's CLI logged in, and `gh`, `go`, `uv`, `psql`. Nothing else of the audit lives on a machine.
 - `dm` against prod: `env DATABASE_URL="$DBURL" ANTHROPIC_API_KEY= ./dm ...`.
   Never from a branch that adds a migration not yet deployed.
 - Read-only SQL: `psql "$DBURL" -X -At -F ' | ' -c "..."`.
@@ -76,14 +77,16 @@ go build -o dm .
 Every run has something to audit. It always covers two things:
 
 1. **The new window**: what the worker produced since the last audit
-   (`bd memories audit-last-run`; if there is none, the last 3 days). It shows
+   (`.claude/skills/audit/scripts/audit_state.sh get last-run`; if there is none, the last 3 days). It shows
    whether the latest code works.
 2. **A slice of history**: older data, walked backwards a step per run, so
    that every fact, stance and contradiction is audited in turn under the
    current rules. Most of the data was made by older prompts and code, so that
    is where most of the errors are.
 
-The position in history is a cursor in bd: `bd memories audit-cursor`, one
+The position in history is a cursor in the database (table `audit_state`,
+so a run from any machine goes on where the last one stopped):
+`.claude/skills/audit/scripts/audit_state.sh get cursor`, one
 line such as `facts_below=152000 stances_below=21000`. If there is none, start
 at the newest ids (`max(id)+1` of `facts` and `stance_documents`). Each run
 takes the next band below the cursor:
@@ -110,7 +113,7 @@ It prints the contradictions and their last verdicts, the new facts per
 source, the new entities, and the known failure gauges (Google redirect URLs,
 tweets on a profile URL, undated news, sentinel dates, documents without text,
 same-quote duplicates, fan-out, stance sizes, API spend). Compare with the last
-audit's numbers in bd (`bd memories audit-last-run`): a gauge going up is a
+audit's numbers (`.claude/skills/audit/scripts/audit_state.sh get last-run`): a gauge going up is a
 regression to explain before anything else. Then read the worker's errors
 and the X bot (the two sections below): they are part of every run.
 
@@ -360,7 +363,11 @@ DATABASE_URL="$DBURL" uv run -q --with 'psycopg[binary]' python -I \
   .claude/skills/audit/scripts/audit_record.py --dir <audit folder> --at <UTC timestamp> --apply
 ```
 
-Then: `bd remember --key audit-last-run "<UTC timestamp>: <the gauges in one line>"`,
-`bd remember --key audit-cursor "facts_below=<N> stances_below=<M> (run of <date>)"`,
-`git pull --rebase`, `git push`, `git status`. (`bd` stays on this machine: no
-`bd dolt push`.)
+Then save what the next run needs, in the database:
+
+```bash
+.claude/skills/audit/scripts/audit_state.sh set last-run "<UTC timestamp>: <the gauges in one line>"
+.claude/skills/audit/scripts/audit_state.sh set cursor "facts_below=<N> stances_below=<M> (run of <date>)"
+```
+
+Then `git pull --rebase`, `git push`, `git status`.

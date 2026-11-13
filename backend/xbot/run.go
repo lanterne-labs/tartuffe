@@ -380,45 +380,22 @@ func draftButtons(id int64, labels []string) [][]Button {
 	}}
 }
 
-// DraftMessage is the Telegram message of a draft: the two facts with their
-// sources, the reason, the versions, how to answer. at is when the tweet
-// goes out once approved.
+// DraftMessage is the Telegram message of a draft: who it is about, when it
+// goes out once approved, and the versions. Nothing else: no facts, no
+// sources, no reason. A tweet that is not understood without them is not a
+// good tweet (the approver, 2026-11-13); the link opens the contradiction on
+// the site for whoever wants to check.
 func DraftMessage(d *Draft, at time.Time, site string) string {
 	c := d.Contradiction
 	esc := html.EscapeString
 	var b strings.Builder
-	reviewed := "non revue"
-	if c.Reviewed {
-		reviewed = "revue : réelle"
-	}
-	fmt.Fprintf(&b, "🐦 <b>Tweet de %s</b>\n<b>%s</b> · %s · %s\n\n", at.Format("02/01 15:04"), esc(c.PersonName), esc(c.StanceLabel), reviewed)
-	side := func(label string, f storage.BotFact) {
-		day := f.DateFR()
-		if day == "" {
-			day = "date ?"
-		}
-		fmt.Fprintf(&b, "<b>%s</b> (%s) : %s\n", label, day, esc(f.Text))
-		if f.Quote != "" {
-			fmt.Fprintf(&b, "<i>« %s »</i>\n", esc(clip(f.Quote, 400)))
-		}
-		for i, u := range f.SourceURLs {
-			if i == 2 {
-				break
-			}
-			fmt.Fprintf(&b, "<a href=\"%s\">source %d</a> ", esc(u), i+1)
-		}
-		b.WriteString("\n\n")
-	}
-	side("Fait 1", c.A)
-	side("Fait 2", c.B)
-	fmt.Fprintf(&b, "<b>Pourquoi</b> : %s\n<a href=\"%s\">sur le site</a>\n", esc(c.Reason), esc(ContradictionLink(site, &c)))
+	fmt.Fprintf(&b, "🐦 <b>%s</b> · %s · <a href=\"%s\">voir</a>\n", esc(c.PersonName), at.Format("02/01 15:04"), esc(ContradictionLink(site, &c)))
 	if d.QuoteLink != "" {
-		fmt.Fprintf(&b, "🔁 Le tweet citera <a href=\"%s\">son propre tweet</a>.\n", esc(d.QuoteLink))
+		fmt.Fprintf(&b, "🔁 Cite <a href=\"%s\">son propre tweet</a>.\n", esc(d.QuoteLink))
 	}
 	for i, v := range d.Versions {
-		fmt.Fprintf(&b, "\n<b>%s</b> (%d car.)\n<pre>%s</pre>\n", esc(label(d, i)), Length(v), esc(v))
+		fmt.Fprintf(&b, "\n<b>%s</b>\n<pre>%s</pre>\n", esc(label(d, i)), esc(v))
 	}
-	b.WriteString("\n" + replyHelp)
 	return b.String()
 }
 
