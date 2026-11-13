@@ -49,10 +49,12 @@ func NewTelegram(token string, chatID int64, base string) *Telegram {
 	return &Telegram{token: token, chatID: chatID, base: base, client: &http.Client{Timeout: 70 * time.Second}}
 }
 
-// Button is an inline button: its label and the data its tap sends back.
+// Button is an inline button: its label and the data its tap sends back, or
+// the link its tap opens (URL; then no data).
 type Button struct {
 	Text string `json:"text"`
-	Data string `json:"callback_data"`
+	Data string `json:"callback_data,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 func (t *Telegram) call(ctx context.Context, method string, body any, out any) error {

@@ -105,6 +105,9 @@ type Reply struct {
 	Reasoning string `json:"reasoning"`
 	Standard  string `json:"standard"`
 	Satirical string `json:"satirical"`
+	// Pick is the choice of a call that chooses among numbered items (the
+	// contradiction a reply is about; 0: none).
+	Pick int64 `json:"pick"`
 }
 
 // tweet is the version of a style.

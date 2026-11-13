@@ -16,6 +16,7 @@ import (
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/plugins/twitter"
 	"digital-mirror/backend/polls"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/worker"
@@ -165,6 +166,24 @@ func startXBot(ctx context.Context, storer *storage.PostgresStorer) error {
 	}
 	if bot.Vote == nil {
 		log.Warn().Msg("Worker: no XBOT_VOTE_POLLS: the X bot tweets nothing about the vote")
+	}
+	if fetcher, err := twitter.NewTwitterAPIIOFetcherFromEnv(); err != nil {
+		log.Warn().Err(err).Msg("Worker: no tweet search: the X bot proposes no reply under the candidates' tweets")
+	} else {
+		bot.FindTweets = func(ctx context.Context, query string, max int) ([]xbot.FoundTweet, error) {
+			tweets, err := fetcher.FetchTweets(ctx, query, twitter.FetchOptions{MaxTweets: max})
+			if err != nil {
+				return nil, err
+			}
+			out := make([]xbot.FoundTweet, 0, len(tweets))
+			for _, t := range tweets {
+				if t.IsRetweet || t.IsReply {
+					continue
+				}
+				out = append(out, xbot.FoundTweet{ID: t.ID, Text: t.Text, Author: t.AuthorHandle, URL: t.URL, Views: t.Views, Likes: t.Likes, At: t.CreatedAt})
+			}
+			return out, nil
+		}
 	}
 	if p := xbot.NewPosterFromEnv(storer); p != nil {
 		bot.Poster = p

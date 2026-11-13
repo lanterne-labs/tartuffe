@@ -526,3 +526,84 @@ func TestBotVoteNeverRepeats(t *testing.T) {
 	angle, _ = angleOf(6)
 	assert.Equal(t, "moliere", angle, "the statement is used once")
 }
+
+// TestBotReply: an hour before a reply slot the bot reads the candidates'
+// tweets, takes the most seen, asks which contradiction answers it and sends
+// two versions with a link each that opens X on the reply; nothing is posted
+// by the bot. A tweet considered is never considered again; a tweet nothing
+// answers is left; "C'est envoyé" closes the draft.
+func TestBotReply(t *testing.T) {
+	b, tg, poster, pool := testBot(t)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `TRUNCATE x_reply_targets`)
+	require.NoError(t, err)
+	b.Slots = nil
+	b.ReplySlots = []Clock{{12, 0}, {19, 0}}
+	var query string
+	found := []FoundTweet{
+		{ID: "10", Text: "La retraite, parlons-en.", Author: "JDupont", URL: "https://x.com/JDupont/status/10", Views: 9000, Likes: 300},
+		{ID: "11", Text: "Retraites : je n'ai jamais varié.", Author: "jdupont", URL: "https://x.com/jdupont/status/11", Views: 250000, Likes: 4000},
+		{ID: "13", Text: "Peu lu.", Author: "jdupont", Views: 800000, Likes: 20},
+		{ID: "12", Text: "Un autre.", Author: "quelquunDautre", Views: 900000},
+	}
+	b.FindTweets = func(_ context.Context, q string, _ int) ([]FoundTweet, error) {
+		query = q
+		return found, nil
+	}
+	w := b.Writer.(*fakeWriter)
+	w.reply = Reply{Pick: 1, Standard: "Jean Dupont : « Je voterai le report à 64 ans ». Jamais varié ?", Satirical: "Jamais varié, sauf de 60 à 64."}
+	start := b.Now() // 11:30
+
+	require.NoError(t, b.Tick(ctx))
+	assert.Equal(t, fmt.Sprintf("(from:jdupont) -filter:replies since_time:%d", start.Add(-24*time.Hour).Unix()), query)
+	msg := tg.last("sendMessage")
+	text := msg["text"].(string)
+	assert.Contains(t, text, "Réponse à proposer")
+	assert.Contains(t, text, "250 000 vues")
+	assert.Contains(t, text, "je n&#39;ai jamais varié", "the most seen tweet of the candidate")
+	assert.Less(t, strings.Index(text, "sauf de 60 à 64"), strings.Index(text, "Jamais varié ?"), "the funny version first")
+	rows := msg["reply_markup"].(map[string]any)["inline_keyboard"].([]any)
+	first := rows[0].([]any)[0].(map[string]any)
+	assert.True(t, strings.HasPrefix(first["url"].(string), "https://x.com/intent/post?in_reply_to=11&text=Jamais+vari"), first["url"])
+	assert.Contains(t, first["url"], "tartuffe.me%2Fperson%2Fjean-dupont%3Fc%3D1")
+	assert.Nil(t, first["callback_data"])
+	var kind, replyTo string
+	var variants []string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT kind, reply_to_tweet_id, variants FROM x_posts WHERE id = 1`).Scan(&kind, &replyTo, &variants))
+	assert.Equal(t, "reply", kind)
+	assert.Equal(t, "11", replyTo)
+	assert.Len(t, variants, 2)
+
+	// A rewrite keeps the tweet and the contradiction; "=" gives a link.
+	var tgMsg int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT telegram_message_id FROM x_posts WHERE id = 1`).Scan(&tgMsg))
+	w.reply = Reply{Standard: "Jean Dupont, 60 puis 64.", Satirical: "Constant, à quatre ans près."}
+	require.NoError(t, b.Handle(ctx, Update{ReplyTo: tgMsg, Text: "plus court"}))
+	assert.Contains(t, w.prompt, "Retraites : je n'ai jamais varié.")
+	assert.Contains(t, w.prompt, "plus court")
+	require.NoError(t, pool.QueryRow(ctx, `SELECT telegram_message_id FROM x_posts WHERE id = 1`).Scan(&tgMsg))
+	require.NoError(t, b.Handle(ctx, Update{ReplyTo: tgMsg, Text: "= Ma réponse."}))
+	assert.Equal(t, "draft", postStatus(t, pool, 1), "the bot posts no reply")
+	own := tg.last("sendMessage")["reply_markup"].(map[string]any)["inline_keyboard"].([]any)[0].([]any)[0].(map[string]any)
+	assert.Equal(t, "https://x.com/intent/post?in_reply_to=11&text=Ma+r%C3%A9ponse.", own["url"])
+
+	// A tap on a publish button of a reply is refused; "C'est envoyé" closes it.
+	assert.Error(t, b.Handle(ctx, Update{CallbackID: "c0", Data: "p:1:1"}))
+	require.NoError(t, b.Handle(ctx, Update{CallbackID: "c1", Data: "d:1"}))
+	assert.Equal(t, "posted", postStatus(t, pool, 1))
+	b.Now = func() time.Time { return start.Add(time.Hour) }
+	require.NoError(t, b.Tick(ctx))
+	assert.Empty(t, poster.posted, "nothing goes through the API")
+
+	// 18:15: tweet 11 is not considered again; nothing answers tweet 10.
+	w.reply = Reply{Pick: 0}
+	b.Now = func() time.Time { return start.Add(6*time.Hour + 45*time.Minute) }
+	require.NoError(t, b.Tick(ctx))
+	var outcome string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT outcome FROM x_reply_targets WHERE tweet_id = '10'`).Scan(&outcome))
+	assert.Equal(t, "no_match", outcome)
+	assert.Equal(t, "skipped", postStatus(t, pool, 2), "the slot is left")
+	var targets int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_reply_targets`).Scan(&targets))
+	assert.Equal(t, 2, targets, "a tweet of someone else or with few likes is never a target")
+}

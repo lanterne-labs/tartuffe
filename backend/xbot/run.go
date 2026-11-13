@@ -48,7 +48,11 @@ type Bot struct {
 	// vote at t (nil: none, no vote tweet).
 	VoteSlots []Clock
 	Vote      func(ctx context.Context, t time.Time) (*VoteState, error)
-	Zone      *time.Location
+	// ReplySlots are the slots of the replies proposed under the candidates'
+	// tweets; FindTweets reads X (nil: no reply).
+	ReplySlots []Clock
+	FindTweets func(ctx context.Context, query string, max int) ([]FoundTweet, error)
+	Zone       *time.Location
 	// Lead is how long before its slot a draft is sent; Grace how long after
 	// its slot a draft may still be approved (0: it never expires).
 	Lead, Grace time.Duration
@@ -67,9 +71,11 @@ type Bot struct {
 	Now   func() time.Time
 }
 
-// Config is the bot's settings from the environment: XBOT_SLOTS (default
-// "12:00,19:00", Europe/Paris), XBOT_VOTE_SLOTS (default "09:00,16:00";
-// "none": no vote tweet), XBOT_LINK (default false), XBOT_SITE,
+// Config is the bot's settings from the environment. By default the chat
+// gets three drafts a day, one of each kind, and no more: XBOT_SLOTS (default
+// "19:00", Europe/Paris), XBOT_VOTE_SLOTS (default "12:00"; "none": no vote
+// tweet), XBOT_REPLY_SLOTS (default "14:00": a reply is proposed an hour
+// before; "none": no reply), XBOT_LINK (default false), XBOT_SITE,
 // XBOT_GRACE_HOURS (default 0: a draft never expires), XBOT_JITTER_HOURS
 // (default 2: a tweet goes out up to 2 h before or after its slot).
 func (b *Bot) Config() error {
@@ -80,23 +86,36 @@ func (b *Bot) Config() error {
 	b.Zone = zone
 	slots := os.Getenv("XBOT_SLOTS")
 	if slots == "" {
-		slots = "12:00,19:00"
+		slots = "19:00"
 	}
 	if b.Slots, err = parseSlots("XBOT_SLOTS", slots); err != nil {
 		return err
 	}
 	voteSlots := os.Getenv("XBOT_VOTE_SLOTS")
 	if voteSlots == "" {
-		voteSlots = "09:00,16:00"
+		voteSlots = "12:00"
 	}
 	if b.VoteSlots, err = parseSlots("XBOT_VOTE_SLOTS", voteSlots); err != nil {
 		return err
 	}
-	for _, v := range b.VoteSlots {
-		for _, c := range b.Slots {
-			if v == c {
-				return fmt.Errorf("XBOT_VOTE_SLOTS: %02d:%02d is also a slot of XBOT_SLOTS", v.Hour, v.Min)
+	replySlots := os.Getenv("XBOT_REPLY_SLOTS")
+	if replySlots == "" {
+		replySlots = "14:00"
+	}
+	if b.ReplySlots, err = parseSlots("XBOT_REPLY_SLOTS", replySlots); err != nil {
+		return err
+	}
+	// A slot holds one tweet: no time of day twice.
+	taken := map[Clock]string{}
+	for _, list := range []struct {
+		name  string
+		slots []Clock
+	}{{"XBOT_SLOTS", b.Slots}, {"XBOT_VOTE_SLOTS", b.VoteSlots}, {"XBOT_REPLY_SLOTS", b.ReplySlots}} {
+		for _, c := range list.slots {
+			if other, ok := taken[c]; ok {
+				return fmt.Errorf("%s: %02d:%02d is also a slot of %s", list.name, c.Hour, c.Min, other)
 			}
+			taken[c] = list.name
 		}
 	}
 	b.Link, _ = strconv.ParseBool(os.Getenv("XBOT_LINK"))
@@ -224,10 +243,15 @@ func (b *Bot) postAt(slot time.Time) time.Time {
 // came, and expires the drafts past their grace when there is one.
 func (b *Bot) Tick(ctx context.Context) error {
 	now := b.Now()
-	if err := b.draftSlots(ctx, b.Slots, now, b.Draft); err != nil {
+	if err := b.draftSlots(ctx, b.Slots, now, b.Lead+b.Jitter, b.Draft); err != nil {
 		return err
 	}
-	if err := b.draftSlots(ctx, b.VoteSlots, now, b.DraftVote); err != nil {
+	if err := b.draftSlots(ctx, b.VoteSlots, now, b.Lead+b.Jitter, b.DraftVote); err != nil {
+		return err
+	}
+	// A reply has no time of its own to wait for: it is proposed Lead before
+	// its slot, to be sent by hand while the tweet is still read.
+	if err := b.draftSlots(ctx, b.ReplySlots, now, b.Lead, b.DraftReply); err != nil {
 		return err
 	}
 	if err := b.PostDue(ctx); err != nil {
@@ -246,11 +270,11 @@ func (b *Bot) Tick(ctx context.Context) error {
 	return nil
 }
 
-// draftSlots drafts the slots due within Lead of the earliest time their
-// tweet may go out (Lead + Jitter before the slot) that hold no tweet yet and
-// are not under the electoral silence.
-func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, draft func(context.Context, time.Time) error) error {
-	for _, slot := range b.nextSlots(slots, now, now.Add(b.Lead+b.Jitter)) {
+// draftSlots drafts the slots due within ahead (for a tweet, Lead before the
+// earliest time it may go out: Lead + Jitter before the slot) that hold no
+// tweet yet and are not under the electoral silence.
+func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, ahead time.Duration, draft func(context.Context, time.Time) error) error {
+	for _, slot := range b.nextSlots(slots, now, now.Add(ahead)) {
 		taken, err := b.Store.XPostSlotTaken(ctx, slot)
 		if err != nil {
 			return err
@@ -444,6 +468,9 @@ func (b *Bot) Handle(ctx context.Context, u Update) error {
 	if !own {
 		return b.revise(ctx, p, text)
 	}
+	if p.Kind == storage.XPostReply {
+		return b.ownReply(ctx, p, text)
+	}
 	if !strings.Contains(text, "@") && len(p.Tags) > 0 {
 		text += "\n\n@" + strings.Join(p.Tags, " @")
 	}
@@ -465,6 +492,9 @@ func (b *Bot) revise(ctx context.Context, p *storage.XPost, request string) erro
 	}
 	if err := tell("✍️ Je réécris : les nouvelles versions arrivent dans une minute ou deux."); err != nil {
 		return err
+	}
+	if p.Kind == storage.XPostReply {
+		return b.reviseReply(ctx, p, request, tell)
 	}
 	if p.ContradictionID == nil {
 		return b.reviseVote(ctx, p, request, tell)
@@ -594,7 +624,17 @@ func (b *Bot) tap(ctx context.Context, u Update) (string, error) {
 		return "Déjà décidé : " + p.Status, nil
 	}
 	switch parts[0] {
+	case "d":
+		if _, err := b.Store.MarkXPostReplied(ctx, p.ID); err != nil {
+			return "", err
+		}
+		b.closeMessage(ctx, p, "✅ Réponse envoyée par vos soins.")
+		return "Noté", nil
 	case "p":
+		// A reply is posted by hand, never through the API.
+		if p.Kind == storage.XPostReply {
+			return "", fmt.Errorf("tap data %q: a reply is not published by the bot", u.Data)
+		}
 		if len(parts) != 3 {
 			return "", fmt.Errorf("tap data %q", u.Data)
 		}

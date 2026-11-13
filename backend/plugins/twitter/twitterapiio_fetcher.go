@@ -74,6 +74,9 @@ type twitterAPIIOTweet struct {
 	Lang           string             `json:"lang"`
 	Author         twitterAPIIOAuthor `json:"author"`
 	RetweetedTweet *json.RawMessage   `json:"retweeted_tweet"`
+	IsReply        bool               `json:"isReply"`
+	ViewCount      int                `json:"viewCount"`
+	LikeCount      int                `json:"likeCount"`
 }
 
 // twitterAPIIOAuthor represents the tweet author from twitterapi.io.
@@ -196,6 +199,9 @@ func mapTweet(t twitterAPIIOTweet) Tweet {
 		URL:          t.URL,
 		Lang:         t.Lang,
 		IsRetweet:    t.RetweetedTweet != nil && string(*t.RetweetedTweet) != "null",
+		IsReply:      t.IsReply,
+		Views:        t.ViewCount,
+		Likes:        t.LikeCount,
 	}
 
 	if t.CreatedAt != "" {

@@ -86,7 +86,8 @@ var (
 // longest first (never drafted first, then at random), and for each a
 // contradiction never drafted (a draft skipped, expired or refused never
 // comes back) nor sharing a fact with one that was (the same story again),
-// not reported, not reviewed false, the ones reviewed real first,
+// not reported, not reviewed false (a reply proposed under a tweet does not
+// count as a draft here), the ones reviewed real first,
 // then at random.
 // excludePersons leaves those persons out (a page of drafts already holding
 // them).
@@ -108,10 +109,10 @@ func (s *PostgresStorer) PickBotContradictions(ctx context.Context, n int, exclu
 				WHERE r.status IN ('pending', 'review', 'accepted')
 				  AND ((r.target_kind = 'contradiction' AND r.target_id = c.id)
 				    OR (r.target_kind = 'fact' AND r.target_id IN (c.fact_a_id, c.fact_b_id))))
-			  AND NOT EXISTS (SELECT 1 FROM x_posts xp WHERE xp.contradiction_id = c.id)
+			  AND NOT EXISTS (SELECT 1 FROM x_posts xp WHERE xp.contradiction_id = c.id AND xp.kind <> 'reply')
 			  AND NOT EXISTS (
 				SELECT 1 FROM x_posts xp JOIN contradictions c2 ON c2.id = xp.contradiction_id
-				WHERE c2.fact_a_id IN (c.fact_a_id, c.fact_b_id) OR c2.fact_b_id IN (c.fact_a_id, c.fact_b_id))
+				WHERE xp.kind <> 'reply' AND (c2.fact_a_id IN (c.fact_a_id, c.fact_b_id) OR c2.fact_b_id IN (c.fact_a_id, c.fact_b_id)))
 		), one AS (
 			SELECT DISTINCT ON (person_id) id, person_id, reviewed
 			FROM eligible
@@ -121,7 +122,7 @@ func (s *PostgresStorer) PickBotContradictions(ctx context.Context, n int, exclu
 		FROM one
 		LEFT JOIN LATERAL (
 			SELECT MAX(created_at) AS at FROM x_posts xp
-			WHERE xp.person_id = one.person_id AND xp.status IN ('draft', 'approved', 'posted')
+			WHERE xp.person_id = one.person_id AND xp.kind = 'contradiction' AND xp.status IN ('draft', 'approved', 'posted')
 		) last ON true
 		ORDER BY last.at ASC NULLS FIRST, random()
 		LIMIT $1`, n, excludePersons)
@@ -369,7 +370,9 @@ type XPost struct {
 	// Angle is the angle of a tweet on the vote (xbot.VoteAngles; "": none).
 	Angle string
 	// FactID is the fact of a candidate a vote tweet starts from (nil: none).
-	FactID            *int64
+	FactID *int64
+	// ReplyTo is the tweet a reply answers (kind reply; nil otherwise).
+	ReplyTo           *string
 	Chosen            *string
 	Status            string
 	TelegramMessageID *int64
@@ -378,11 +381,11 @@ type XPost struct {
 	CreatedAt         time.Time
 }
 
-const xPostColumns = `id, kind, contradiction_id, COALESCE(person_id, 0), quote_tweet_id, slot, COALESCE(post_at, slot), variants, tags, angle, fact_id, chosen, status, telegram_message_id, tweet_id, error, created_at`
+const xPostColumns = `id, kind, contradiction_id, COALESCE(person_id, 0), quote_tweet_id, slot, COALESCE(post_at, slot), variants, tags, angle, fact_id, reply_to_tweet_id, chosen, status, telegram_message_id, tweet_id, error, created_at`
 
 func scanXPost(row pgx.CollectableRow) (XPost, error) {
 	var p XPost
-	err := row.Scan(&p.ID, &p.Kind, &p.ContradictionID, &p.PersonID, &p.QuoteTweetID, &p.Slot, &p.PostAt, &p.Variants, &p.Tags, &p.Angle, &p.FactID, &p.Chosen, &p.Status,
+	err := row.Scan(&p.ID, &p.Kind, &p.ContradictionID, &p.PersonID, &p.QuoteTweetID, &p.Slot, &p.PostAt, &p.Variants, &p.Tags, &p.Angle, &p.FactID, &p.ReplyTo, &p.Chosen, &p.Status,
 		&p.TelegramMessageID, &p.TweetID, &p.Error, &p.CreatedAt)
 	return p, err
 }
@@ -412,9 +415,9 @@ func (s *PostgresStorer) InsertXPost(ctx context.Context, p XPost) (int64, error
 	defer tx.Rollback(ctx)
 	var id int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO x_posts (kind, contradiction_id, person_id, quote_tweet_id, slot, post_at, variants, tags, angle, fact_id, status)
-		VALUES ($1, $2, NULLIF($3, 0), $4, $5, $6, $7, $8, $9, $10, 'draft') RETURNING id`,
-		p.Kind, p.ContradictionID, p.PersonID, p.QuoteTweetID, p.Slot, p.PostAt, p.Variants, p.Tags, p.Angle, p.FactID).Scan(&id)
+		INSERT INTO x_posts (kind, contradiction_id, person_id, quote_tweet_id, slot, post_at, variants, tags, angle, fact_id, reply_to_tweet_id, status)
+		VALUES ($1, $2, NULLIF($3, 0), $4, $5, $6, $7, $8, $9, $10, $11, 'draft') RETURNING id`,
+		p.Kind, p.ContradictionID, p.PersonID, p.QuoteTweetID, p.Slot, p.PostAt, p.Variants, p.Tags, p.Angle, p.FactID, p.ReplyTo).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert x post: %w", err)
 	}
@@ -621,7 +624,7 @@ func (s *PostgresStorer) XPostSlotTaken(ctx context.Context, slot time.Time) (bo
 // OpenXPostPersons returns the persons of the drafts and approved tweets not
 // posted yet: a new draft is about someone else.
 func (s *PostgresStorer) OpenXPostPersons(ctx context.Context) ([]int64, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT person_id FROM x_posts WHERE status IN ('draft', 'approved') AND person_id IS NOT NULL`)
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT person_id FROM x_posts WHERE kind = 'contradiction' AND status IN ('draft', 'approved') AND person_id IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("open x post persons: %w", err)
 	}
