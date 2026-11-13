@@ -71,10 +71,11 @@ type Bot struct {
 	Now   func() time.Time
 }
 
-// Config is the bot's settings from the environment: XBOT_SLOTS (default
-// "12:00,19:00", Europe/Paris), XBOT_VOTE_SLOTS (default "09:00,16:00";
-// "none": no vote tweet), XBOT_REPLY_SLOTS (default "09:30,14:00,19:30": a
-// reply is proposed an hour before; "none": no reply), XBOT_LINK (default false), XBOT_SITE,
+// Config is the bot's settings from the environment. By default the chat
+// gets three drafts a day, one of each kind, and no more: XBOT_SLOTS (default
+// "19:00", Europe/Paris), XBOT_VOTE_SLOTS (default "12:00"; "none": no vote
+// tweet), XBOT_REPLY_SLOTS (default "14:00": a reply is proposed an hour
+// before; "none": no reply), XBOT_LINK (default false), XBOT_SITE,
 // XBOT_GRACE_HOURS (default 0: a draft never expires), XBOT_JITTER_HOURS
 // (default 2: a tweet goes out up to 2 h before or after its slot).
 func (b *Bot) Config() error {
@@ -85,21 +86,21 @@ func (b *Bot) Config() error {
 	b.Zone = zone
 	slots := os.Getenv("XBOT_SLOTS")
 	if slots == "" {
-		slots = "12:00,19:00"
+		slots = "19:00"
 	}
 	if b.Slots, err = parseSlots("XBOT_SLOTS", slots); err != nil {
 		return err
 	}
 	voteSlots := os.Getenv("XBOT_VOTE_SLOTS")
 	if voteSlots == "" {
-		voteSlots = "09:00,16:00"
+		voteSlots = "12:00"
 	}
 	if b.VoteSlots, err = parseSlots("XBOT_VOTE_SLOTS", voteSlots); err != nil {
 		return err
 	}
 	replySlots := os.Getenv("XBOT_REPLY_SLOTS")
 	if replySlots == "" {
-		replySlots = "09:30,14:00,19:30"
+		replySlots = "14:00"
 	}
 	if b.ReplySlots, err = parseSlots("XBOT_REPLY_SLOTS", replySlots); err != nil {
 		return err
