@@ -541,11 +541,12 @@ func TestBotReply(t *testing.T) {
 	b.ReplySlots = []Clock{{12, 0}, {19, 0}}
 	var query string
 	found := []FoundTweet{
-		{ID: "10", Text: "La retraite, parlons-en.", Author: "JDupont", URL: "https://x.com/JDupont/status/10", Views: 9000},
-		{ID: "11", Text: "Retraites : je n'ai jamais varié.", Author: "jdupont", URL: "https://x.com/jdupont/status/11", Views: 250000},
+		{ID: "10", Text: "La retraite, parlons-en.", Author: "JDupont", URL: "https://x.com/JDupont/status/10", Views: 9000, Likes: 300},
+		{ID: "11", Text: "Retraites : je n'ai jamais varié.", Author: "jdupont", URL: "https://x.com/jdupont/status/11", Views: 250000, Likes: 4000},
+		{ID: "13", Text: "Peu lu.", Author: "jdupont", Views: 800000, Likes: 20},
 		{ID: "12", Text: "Un autre.", Author: "quelquunDautre", Views: 900000},
 	}
-	b.FindTweets = func(_ context.Context, q string, _ time.Time, _ int) ([]FoundTweet, error) {
+	b.FindTweets = func(_ context.Context, q string, _ int) ([]FoundTweet, error) {
 		query = q
 		return found, nil
 	}
@@ -554,7 +555,7 @@ func TestBotReply(t *testing.T) {
 	start := b.Now() // 11:30
 
 	require.NoError(t, b.Tick(ctx))
-	assert.Equal(t, "(from:jdupont) -filter:replies -filter:retweets min_faves:150", query)
+	assert.Equal(t, fmt.Sprintf("(from:jdupont) -filter:replies since_time:%d", start.Add(-24*time.Hour).Unix()), query)
 	msg := tg.last("sendMessage")
 	text := msg["text"].(string)
 	assert.Contains(t, text, "Réponse à proposer")
@@ -604,5 +605,5 @@ func TestBotReply(t *testing.T) {
 	assert.Equal(t, "skipped", postStatus(t, pool, 2), "the slot is left")
 	var targets int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM x_reply_targets`).Scan(&targets))
-	assert.Equal(t, 2, targets, "a tweet of someone else is never a target")
+	assert.Equal(t, 2, targets, "a tweet of someone else or with few likes is never a target")
 }

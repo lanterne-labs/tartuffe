@@ -170,8 +170,8 @@ func startXBot(ctx context.Context, storer *storage.PostgresStorer) error {
 	if fetcher, err := twitter.NewTwitterAPIIOFetcherFromEnv(); err != nil {
 		log.Warn().Err(err).Msg("Worker: no tweet search: the X bot proposes no reply under the candidates' tweets")
 	} else {
-		bot.FindTweets = func(ctx context.Context, query string, since time.Time, max int) ([]xbot.FoundTweet, error) {
-			tweets, err := fetcher.FetchTweets(ctx, query, twitter.FetchOptions{MaxTweets: max, DateFrom: &since})
+		bot.FindTweets = func(ctx context.Context, query string, max int) ([]xbot.FoundTweet, error) {
+			tweets, err := fetcher.FetchTweets(ctx, query, twitter.FetchOptions{MaxTweets: max})
 			if err != nil {
 				return nil, err
 			}

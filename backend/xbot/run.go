@@ -51,7 +51,7 @@ type Bot struct {
 	// ReplySlots are the slots of the replies proposed under the candidates'
 	// tweets; FindTweets reads X (nil: no reply).
 	ReplySlots []Clock
-	FindTweets func(ctx context.Context, query string, since time.Time, max int) ([]FoundTweet, error)
+	FindTweets func(ctx context.Context, query string, max int) ([]FoundTweet, error)
 	Zone       *time.Location
 	// Lead is how long before its slot a draft is sent; Grace how long after
 	// its slot a draft may still be approved (0: it never expires).

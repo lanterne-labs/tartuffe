@@ -39,11 +39,11 @@ type FoundTweet struct {
 const (
 	// ReplyWindow is how old a tweet may be: later, the readers are gone.
 	ReplyWindow = 24 * time.Hour
-	// replyMinLikes keeps the tweets few read out of the search (the search
-	// bills per tweet returned).
+	// replyMinLikes leaves out the tweets few read.
 	replyMinLikes = 150
-	// replySearchMax is the most tweets one search returns.
-	replySearchMax = 40
+	// replySearchMax is the most tweets one search returns, the latest first
+	// (the search bills per tweet returned: $0.15 per 1 000).
+	replySearchMax = 100
 	// replyTries is how many tweets a slot asks the LLM about, the most seen
 	// first, before it gives up.
 	replyTries = 3
@@ -52,14 +52,15 @@ const (
 	replyChoices = 40
 )
 
-// ReplyQuery is the search for the candidates' own tweets worth a reply:
-// theirs, not a reply or a retweet, liked enough.
-func ReplyQuery(handles []storage.CandidateHandle) string {
+// ReplyQuery is the search for the candidates' own tweets since a time, not
+// a reply. Only operators the search documents: the likes and the retweets
+// are filtered from the result.
+func ReplyQuery(handles []storage.CandidateHandle, since time.Time) string {
 	from := make([]string, 0, len(handles))
 	for _, h := range handles {
 		from = append(from, "from:"+h.Handle)
 	}
-	return fmt.Sprintf("(%s) -filter:replies -filter:retweets min_faves:%d", strings.Join(from, " OR "), replyMinLikes)
+	return fmt.Sprintf("(%s) -filter:replies since_time:%d", strings.Join(from, " OR "), since.Unix())
 }
 
 // ReplyLink opens X on a reply to the tweet with the text written; the
@@ -149,7 +150,7 @@ func (b *Bot) DraftReply(ctx context.Context, slot time.Time) error {
 	for _, h := range handles {
 		owner[h.Handle] = h
 	}
-	found, err := b.FindTweets(ctx, ReplyQuery(handles), b.Now().Add(-ReplyWindow), replySearchMax)
+	found, err := b.FindTweets(ctx, ReplyQuery(handles, b.Now().Add(-ReplyWindow)), replySearchMax)
 	if err != nil {
 		// The search is away: the slot is held, not tried every minute.
 		log.Error().Err(err).Time("slot", slot).Msg("xbot: the search for tweets to reply to failed; no reply for this slot")
@@ -176,7 +177,7 @@ func (b *Bot) DraftReply(ctx context.Context, slot time.Time) error {
 	tried := 0
 	for _, f := range found {
 		h, ok := owner[strings.ToLower(f.Author)]
-		if !ok || seenTargets[f.ID] {
+		if !ok || seenTargets[f.ID] || f.Likes < replyMinLikes {
 			continue
 		}
 		if tried == replyTries {
