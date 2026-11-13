@@ -311,6 +311,56 @@ d'austérité était « en partie responsable » de la lenteur des secours.`
 	}
 }
 
+// TestRemoteLLMExtractor_PeriphraseSpeaker locks the speaker of a quote whose
+// attribution names another person by a periphrase. In an article of L'Opinion
+// on François Ruffin (2026-08-29), « je n'ai jamais été favorable à cette
+// procédure, même quand j'y ai participé, en 2011 », "a ajouté le député de
+// Corrèze" (François Hollande) became a fact of Ruffin (prod 15355) and a false
+// contradiction (2438).
+func TestRemoteLLMExtractor_PeriphraseSpeaker(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Présidentielle 2027 : François Ruffin fustige la primaire sociale-démocrate
+
+« À la place de chercher à l'élargir au maximum, on a une démarche qui est presque antipopulaire », a critiqué
+le député de la Somme, évoquant « un suffrage censitaire ».
+
+Des critiques partagées par un ancien très haut responsable : de son côté, sur franceinfo, l'ancien président de la
+République, François Hollande, a estimé que la primaire « suscite plus de divisions que ne propose le rassemblement ».
+« Je remercie tous ceux qui, sincèrement, veulent m'inviter à venir à la primaire. Mais je n'ai jamais été favorable à
+cette procédure, même quand j'y ai participé, en 2011, et que j'en ai été victorieux », a ajouté le député de Corrèze.
+
+Arrivé au côté d'Olivier Faure, François Ruffin est venu pour participer à un débat sur le travail. « Je ne veux pas
+les gauches irréconciliables », a-t-il assuré.`
+
+	facts, err := extractorClient.ExtractFacts(context.Background(), "François Ruffin", extractor.ExtractedContent{
+		URL:     "http://example.com/periphrase",
+		Title:   "Présidentielle 2027 : François Ruffin fustige la primaire sociale-démocrate",
+		Content: mockText,
+	})
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact, got 0")
+	}
+	for i, f := range facts {
+		t.Logf("  [%d] entity=%q normalized=%q", i+1, f.SubjectEntity, f.NormalizedFactText)
+		if !strings.Contains(strings.ToLower(f.SubjectEntity), "ruffin") {
+			continue
+		}
+		hay := strings.ToLower(f.NormalizedFactText)
+		if strings.Contains(hay, "2011") || strings.Contains(hay, "jamais été favorable") {
+			t.Errorf("Fact %d gives Hollande's sentence to Ruffin: %q", i+1, f.NormalizedFactText)
+		}
+	}
+}
+
 // TestRemoteLLMExtractor_LiveBlogSpeakers locks the attribution of quotes on
 // a page where many politicians speak (mirror-ds6.6). On the Figaro live blog
 // of 2026-09-12, searched for Édouard Philippe, Olivier Faure's "je suis de
