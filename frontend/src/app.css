@@ -351,3 +351,11 @@ main.page-content h3 {
   font-weight: 700;
   letter-spacing: -0.02em;
 }
+
+/* A card whose "?" is open rises above its neighbours: a card that lifts
+   under the pointer is a layer of its own, and the next card of the grid
+   would be drawn over the bubble. */
+:where(.card, .item, .clash, .stance-card):has(.q[aria-expanded='true']) {
+  position: relative;
+  z-index: 5;
+}

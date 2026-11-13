@@ -500,8 +500,6 @@
 	/* Card */
 	.card {
 		background: var(--bg-card);
-		backdrop-filter: var(--glass-blur);
-		-webkit-backdrop-filter: var(--glass-blur);
 		border: 1px solid var(--border-card);
 		border-radius: var(--radius-md);
 		padding: 1.25rem;
