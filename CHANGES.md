@@ -4,6 +4,8 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 
 ## 2026-11-13: The audit keeps its state in the database
 
+Also: **the bot's Telegram drafts carry no context.** A contradiction draft listed the two facts, their quotes, their sources and the reason above the versions; the approver read all that instead of the tweet. It is now the person, the time, a link to the site and the two versions (a reply draft: the tweet answered and the two versions). A tweet that needs the context to be understood is not a good tweet, and « À revoir » is there for a contradiction that looks weak.
+
 The audit skill kept its cursor in the history and the numbers of its last run in bd, which lives on one machine: a run from another machine started again from the newest ids and had nothing to compare with. They are now two rows of `audit_state` (`.claude/skills/audit/scripts/audit_state.sh get|set cursor|last-run`). A new machine needs the checkout, its `CLAUDE.local.md` and the tools; nothing else of the audit lives on a machine.
 
 ## 2026-11-13: A daily digest instead of an alert nobody could act on, and « À revoir » on the bot's drafts
