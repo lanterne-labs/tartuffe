@@ -1397,3 +1397,15 @@ cases:
     date_a: "2015-02-01"
     date_b: "2021-01-01"
 
+  # ---- ONE ACT, TWO DESCRIPTIONS: the outlet's label against the person's own wording
+  # ---- (the rule existed; the judge and the first review missed it: audit of 2026-11-14).
+  - name: "FP_2471_lisnard_outlet_label_resignation"
+    fact_a: "David Lisnard a affirmé ne pas appeler à la démission d'Emmanuel Macron."
+    fact_b: "David Lisnard demande la démission d'Emmanuel Macron."
+    claimed_reason: "Lisnard a demandé la démission de Macron fin août 2025, puis a affirmé en octobre ne pas y appeler, ce qui nie sa propre position antérieure."
+    expect: drop
+    bucket: third_party_narrative
+    notes: "B is La Provence's label of his speech ('demande la démission d'Emmanuel Macron et se positionne...'), no quote; A is his own wording ('Je n'appelle pas à sa démission, je ne suis pas un factieux', he asks for a presidential election in June). Prod 2471 (2026-11-14)."
+    date_a: "2025-10-10"
+    date_b: "2025-08-30"
+

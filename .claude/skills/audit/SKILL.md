@@ -295,8 +295,14 @@ the invalid facts"). A verdict alone is not enough; each line answers:
    grounding, the statement date, the entity validator, the vote resolver
    (`backend/plugins/frpolitics`), the stance judge, the verify judge. Read
    the code or the prompt of that stage; do not guess from the row.
-3. **Was it already covered?** Search the rules, the goldens and the tests
-   for the case. A rule that existed when the row was made and was not
+3. **Was it already covered?** Read the WHOLE rulebook before answering
+   (`false_positives.txt`, the short forms in `contradiction.go`, `verify.go`,
+   `fact_extraction.go`), not a search for a keyword: on 2026-11-14 a case
+   called "no rule" was one clause away from an existing rule, and a pair
+   reviewed real was the very example of another (ONE ACT, TWO DESCRIPTIONS).
+   A case close to an existing rule WIDENS that rule (a clause, an example);
+   a new rule is for a case no rule is near. The rulebook is read at every
+   judgement: it must not grow by a sentence per audit. A rule that existed when the row was made and was not
    applied needs a golden from this row (the rule is not enough as written); no
    rule: a rule and a golden; a code path: a fix and a unit test; a row made
    before the rule that covers it: nothing new, say which rule.
