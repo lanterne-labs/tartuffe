@@ -1362,3 +1362,26 @@ cases:
     notes: "Both say his own mandate would be a single term of five years; the septennat is the rule he would put to a referendum for his successors. The auditor answers ambiguous (it cannot tell whom the septennat is for), a defensible reading: verify only. Prod 2453 (2026-11-13)."
     date_a: "2026-08-03"
     date_b: "2026-06-01"
+
+  # ---- A refusal to answer before the vote is not a position (audit of 2026-11-14).
+  - name: "FP_2468_attal_no_instruction_before_first_round"
+    fact_a: "Gabriel Attal a appelé le 30 juin 2024 les candidats d'Ensemble qualifiés mais arrivés en troisième position à se désister, affirmant que « pas une voix ne doit aller au RN »."
+    fact_b: "Gabriel Attal a refusé de donner une consigne de vote en cas de duel RN/Front populaire ou de triangulaire où la majorité présidentielle est dernière."
+    claimed_reason: "Il a refusé le 28 juin toute consigne dans les triangulaires où la majorité est dernière, puis a appelé le 30 juin les candidats arrivés troisièmes à se désister."
+    expect: drop
+    bucket: date_only_no_commitment
+    notes: "The refusal came two days before the first round, to a hypothetical; the call came the evening of the results. Prod 2468, and 2397 for the same refusal (2026-11-14)."
+    date_a: "2024-06-30"
+    date_b: "2024-06-28"
+
+  # ---- A bundled vote explained the same day (audit of 2026-11-14).
+  - name: "FP_2469_ruffin_ukraine_vote_explained"
+    fact_a: "François Ruffin affirme que la France doit renforcer son assistance militaire et civile à l'Ukraine pour lui permettre de défendre sa souveraineté, son indépendance et son intégrité territoriale."
+    fact_b: "François Ruffin a voté contre l'accord de soutien bilatéral à l'Ukraine à l'Assemblée nationale le 12 mars 2024."
+    claimed_reason: "Le même jour, il réclame de renforcer l'assistance à l'Ukraine mais vote contre l'accord de soutien à ce pays."
+    expect: drop
+    bucket: different_subjects
+    notes: "His tweet of the day answers four questions: yes to military and civil aid, yes to a European defence, no to Ukraine's NATO membership (named 11 times in the agreement), no to troops. The vote was on the bundle. Prod 2469 (2026-11-14)."
+    date_a: "2024-03-12"
+    date_b: "2024-03-12"
+
