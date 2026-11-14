@@ -35,3 +35,11 @@ func TestReplySearchReadsXOncePerSlot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, calls)
 }
+
+func TestSlotTriesLeavesTheSlotAfterTwo(t *testing.T) {
+	var w slotTries
+	slot := time.Date(2026, 11, 14, 13, 0, 0, 0, time.UTC)
+	assert.False(t, w.failed(slot), "the first failure: one more try")
+	assert.True(t, w.failed(slot), "the second: the slot is left")
+	assert.False(t, w.failed(slot.Add(time.Hour)), "another slot starts over")
+}
