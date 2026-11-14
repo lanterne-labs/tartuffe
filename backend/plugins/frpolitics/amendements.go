@@ -30,10 +30,13 @@ type AmendementInfo struct {
 	TexteRef       string
 	AuthorActorRef string
 	AuthorGroupRef string
-	Dispositif     string
-	Expose         string
-	Sort           string
-	DateSort       time.Time
+	// AuthorLabel is the archive's list of the signatories, the author
+	// first ("M. Sitzenstuhl, Mme Dupont"); empty when the entry has none.
+	AuthorLabel string
+	Dispositif  string
+	Expose      string
+	Sort        string
+	DateSort    time.Time
 }
 
 // amdArchives caches one open zip reader per legislature for the process
@@ -206,6 +209,7 @@ func parseAmendementEntry(f *zip.File) (*AmendementInfo, error) {
 					ActeurRef          any `json:"acteurRef"`
 					GroupePolitiqueRef any `json:"groupePolitiqueRef"`
 				} `json:"auteur"`
+				Libelle string `json:"libelle"`
 			} `json:"signataires"`
 			Corps struct {
 				ContenuAuteur struct {
@@ -230,6 +234,7 @@ func parseAmendementEntry(f *zip.File) (*AmendementInfo, error) {
 		TexteRef:       a.TexteLegislatifRef,
 		AuthorActorRef: asString(a.Signataires.Auteur.ActeurRef),
 		AuthorGroupRef: asString(a.Signataires.Auteur.GroupePolitiqueRef),
+		AuthorLabel:    cleanAmdText(a.Signataires.Libelle),
 		Dispositif:     cleanAmdText(a.Corps.ContenuAuteur.Dispositif),
 		Expose:         cleanAmdText(a.Corps.ContenuAuteur.ExposeSommaire),
 		Sort:           a.CycleDeVie.Sort,
