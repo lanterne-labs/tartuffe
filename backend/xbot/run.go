@@ -39,9 +39,11 @@ type Bot struct {
 	Store    *storage.PostgresStorer
 	Writer   Writer
 	Telegram *Telegram
-	// waitingSlot is the slot whose draft waits for the LLM: its warning is
-	// logged once, not every minute.
-	waitingSlot time.Time
+	// waiting counts the tries of the slot whose draft the LLM could not
+	// write: after draftTries the slot is left.
+	waiting slotTries
+	// replies keeps the search of the reply slot being drafted.
+	replies replySearch
 	// Poster is nil without the X keys: approved tweets then wait.
 	Poster Poster
 	// Silence reports whether the electoral silence holds at t (the eve and
@@ -247,15 +249,15 @@ func (b *Bot) postAt(slot time.Time) time.Time {
 // came, and expires the drafts past their grace when there is one.
 func (b *Bot) Tick(ctx context.Context) error {
 	now := b.Now()
-	if err := b.draftSlots(ctx, b.Slots, now, b.Lead+b.Jitter, b.Draft); err != nil {
+	if err := b.draftSlots(ctx, storage.XPostContradiction, b.Slots, now, b.Lead+b.Jitter, b.Draft); err != nil {
 		return err
 	}
-	if err := b.draftSlots(ctx, b.VoteSlots, now, b.Lead+b.Jitter, b.DraftVote); err != nil {
+	if err := b.draftSlots(ctx, storage.XPostVote, b.VoteSlots, now, b.Lead+b.Jitter, b.DraftVote); err != nil {
 		return err
 	}
 	// A reply has no time of its own to wait for: it is proposed Lead before
 	// its slot, to be sent by hand while the tweet is still read.
-	if err := b.draftSlots(ctx, b.ReplySlots, now, b.Lead, b.DraftReply); err != nil {
+	if err := b.draftSlots(ctx, storage.XPostReply, b.ReplySlots, now, b.Lead, b.DraftReply); err != nil {
 		return err
 	}
 	if err := b.PostDue(ctx); err != nil {
@@ -274,10 +276,31 @@ func (b *Bot) Tick(ctx context.Context) error {
 	return nil
 }
 
+// draftTries is how many times the draft of a slot is tried while the LLM is
+// unavailable; then the slot is left (the owner, 2026-11-14: "try 2 times
+// and shut down if it doesn't work, no retrial").
+const draftTries = 2
+
+// slotTries counts the failed tries of one slot.
+type slotTries struct {
+	slot time.Time
+	n    int
+}
+
+// failed counts a failed try of the slot and reports whether it was the last.
+func (t *slotTries) failed(slot time.Time) bool {
+	if !t.slot.Equal(slot) {
+		t.slot, t.n = slot, 0
+	}
+	t.n++
+	return t.n >= draftTries
+}
+
 // draftSlots drafts the slots due within ahead (for a tweet, Lead before the
 // earliest time it may go out: Lead + Jitter before the slot) that hold no
-// tweet yet and are not under the electoral silence.
-func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, ahead time.Duration, draft func(context.Context, time.Time) error) error {
+// tweet yet and are not under the electoral silence. A draft the LLM could not write is
+// tried draftTries times, then its slot is left.
+func (b *Bot) draftSlots(ctx context.Context, kind string, slots []Clock, now time.Time, ahead time.Duration, draft func(context.Context, time.Time) error) error {
 	for _, slot := range b.nextSlots(slots, now, now.Add(ahead)) {
 		taken, err := b.Store.XPostSlotTaken(ctx, slot)
 		if err != nil {
@@ -297,11 +320,15 @@ func (b *Bot) draftSlots(ctx context.Context, slots []Clock, now time.Time, ahea
 		}
 		if err := draft(ctx, slot); err != nil {
 			if errors.Is(err, llm.ErrUnavailable) {
-				if !b.waitingSlot.Equal(slot) {
-					b.waitingSlot = slot
-					log.Warn().Err(err).Time("slot", slot).Msg("xbot: LLM unavailable; the draft is tried again every tick until its slot")
+				if !b.waiting.failed(slot) {
+					log.Warn().Err(err).Time("slot", slot).Msg("xbot: LLM unavailable; the draft is tried once more at the next tick")
+					break
 				}
-				break
+				log.Warn().Err(err).Time("slot", slot).Int("tries", draftTries).Msg("xbot: LLM unavailable; the slot is left")
+				if err := b.holdSlot(ctx, kind, slot); err != nil {
+					return err
+				}
+				continue
 			}
 			return fmt.Errorf("draft for %s: %w", slot, err)
 		}

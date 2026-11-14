@@ -132,6 +132,29 @@ func ComposeReply(ctx context.Context, w Writer, c *storage.BotContradiction, t 
 	return d, nil
 }
 
+// replySearch keeps the search of one slot. A draft the LLM could not write
+// is tried again every tick until its slot: it reads X once, not once a
+// minute (2026-11-14: 37 searches of 100 tweets in an hour, every seat at its
+// limit).
+type replySearch struct {
+	slot  time.Time
+	found []FoundTweet
+	done  bool
+}
+
+// find returns the tweets of the slot, searching only the first time.
+func (r *replySearch) find(slot time.Time, search func() ([]FoundTweet, error)) ([]FoundTweet, error) {
+	if r.done && r.slot.Equal(slot) {
+		return r.found, nil
+	}
+	found, err := search()
+	if err != nil {
+		return nil, err
+	}
+	r.slot, r.found, r.done = slot, found, true
+	return found, nil
+}
+
 // DraftReply proposes the reply of a slot: under the most seen tweet of a
 // candidate, of the last day, that one of their contradictions answers. No
 // such tweet: the slot is left.
@@ -150,7 +173,9 @@ func (b *Bot) DraftReply(ctx context.Context, slot time.Time) error {
 	for _, h := range handles {
 		owner[h.Handle] = h
 	}
-	found, err := b.FindTweets(ctx, ReplyQuery(handles, b.Now().Add(-ReplyWindow)), replySearchMax)
+	found, err := b.replies.find(slot, func() ([]FoundTweet, error) {
+		return b.FindTweets(ctx, ReplyQuery(handles, b.Now().Add(-ReplyWindow)), replySearchMax)
+	})
 	if err != nil {
 		// The search is away: the slot is held, not tried every minute.
 		log.Error().Err(err).Time("slot", slot).Msg("xbot: the search for tweets to reply to failed; no reply for this slot")

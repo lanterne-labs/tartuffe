@@ -7,6 +7,7 @@ import (
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/util"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -325,7 +326,14 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 		if err != nil {
 			// A context-overflow 400 surfaces here as an llm.ClientError whose
 			// message carries the body, which is what isContextOverflowError reads.
-			log.Error().Err(err).Dur("duration", duration).Str("url", m.client.URL).Msg("Chat API call failed")
+			// An endpoint that is away (every seat at its limit) fails every
+			// call in flight: a warning, the worker logs the outage once
+			// (4 347 error lines in a night, 2026-11-14, hid the real ones).
+			ev := log.Error()
+			if errors.Is(err, llm.ErrUnavailable) {
+				ev = log.Warn()
+			}
+			ev.Err(err).Dur("duration", duration).Str("url", m.client.URL).Msg("Chat API call failed")
 			return nil, err
 		}
 		log.Debug().Dur("duration", duration).Int("content_chars", len(jsonContent)).Str("url", m.client.URL).Msg("Chat API call successful")
