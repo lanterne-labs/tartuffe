@@ -440,8 +440,25 @@ func (h *Housekeeping) lastMaintenance(ctx context.Context) (lastPass, error) {
 
 // maintenance runs one pass over what changed after since (everything when
 // since is zero).
-func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
+func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) (err error) {
 	start := h.now()
+	// A pass the LLM left (every seat at its limit) is recorded as a cut one:
+	// the next pass goes on over the same persons, and the tasks get the
+	// MaintenanceEvery before it holds them off again. Without the record the
+	// pass stayed due and urgent: from 2026-11-11 to 11-14 it started nine
+	// times, each time ahead of the tasks, and never ended.
+	defer func() {
+		if err == nil || !errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
+			return
+		}
+		rows := passRows(h.now().Sub(start), true, since.IsZero(), since)
+		if rerr := h.Storer.RecordJobMetrics(ctx, rows); rerr != nil {
+			log.Error().Err(rerr).Msg("Maintenance: recording the pass the LLM left failed")
+			return
+		}
+		log.Warn().Err(err).Dur("elapsed", h.now().Sub(start).Round(time.Second)).
+			Msg("Maintenance pass stopped: LLM unavailable; recorded as cut, the next pass goes on from it")
+	}()
 	log.Info().Time("since", since).Bool("facts_added", h.dirty.Load()).Msg("Maintenance pass started")
 	var errs []error
 	step := func(name string, err error) error {
@@ -570,16 +587,7 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 
 	h.dirty.Store(false)
 	elapsed := h.now().Sub(start)
-	rows := []storage.JobMetric{{JobType: maintenanceJob, Metric: "duration_seconds", Value: elapsed.Seconds()}}
-	if cut {
-		// The next pass goes on with the persons of this one: everyone (0)
-		// when this pass judged everyone, else what changed after since.
-		var sinceUnix float64
-		if !all {
-			sinceUnix = float64(since.Unix())
-		}
-		rows = append(rows, storage.JobMetric{JobType: maintenanceJob, Metric: "cut_since_unix", Value: sinceUnix})
-	}
+	rows := passRows(elapsed, cut, all, since)
 	if err := storer.RecordJobMetrics(ctx, rows); err != nil {
 		errs = append(errs, fmt.Errorf("recording the pass: %w", err))
 	}
@@ -605,6 +613,21 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// passRows is what a pass records at its end. A cut pass (the detection at
+// detectBudget, or the LLM gone) names what the next one goes on with:
+// everyone (0) when this pass judged everyone, else what changed after since.
+func passRows(elapsed time.Duration, cut, all bool, since time.Time) []storage.JobMetric {
+	rows := []storage.JobMetric{{JobType: maintenanceJob, Metric: "duration_seconds", Value: elapsed.Seconds()}}
+	if cut {
+		var sinceUnix float64
+		if !all {
+			sinceUnix = float64(since.Unix())
+		}
+		rows = append(rows, storage.JobMetric{JobType: maintenanceJob, Metric: "cut_since_unix", Value: sinceUnix})
+	}
+	return rows
 }
 
 // auditIfDue runs the contradiction auditor at most once per auditCadence.

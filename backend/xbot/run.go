@@ -42,6 +42,8 @@ type Bot struct {
 	// waitingSlot is the slot whose draft waits for the LLM: its warning is
 	// logged once, not every minute.
 	waitingSlot time.Time
+	// replies keeps the search of the reply slot being drafted.
+	replies replySearch
 	// Poster is nil without the X keys: approved tweets then wait.
 	Poster Poster
 	// Silence reports whether the electoral silence holds at t (the eve and

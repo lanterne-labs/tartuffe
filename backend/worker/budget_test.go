@@ -38,6 +38,19 @@ func TestMaintenanceEveryFromEnv(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestPassRows(t *testing.T) {
+	since := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	rows := passRows(10*time.Minute, false, false, since)
+	require.Len(t, rows, 1, "a pass that ended its detection records no cut")
+	assert.Equal(t, 600.0, rows[0].Value)
+	rows = passRows(time.Minute, true, false, since)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "cut_since_unix", rows[1].Metric)
+	assert.Equal(t, float64(since.Unix()), rows[1].Value, "the next pass goes on over what changed after since")
+	rows = passRows(time.Minute, true, true, time.Time{})
+	assert.Equal(t, 0.0, rows[1].Value, "a cut pass over everyone")
+}
+
 func TestExtractionShareFromEnv(t *testing.T) {
 	t.Setenv("LLM_EXTRACTION_SHARE", "")
 	v, err := extractionShareFromEnv()
