@@ -281,6 +281,37 @@ rendez-vous sur »); HTML entities left in a quote (`&#xE9;`); a fact text
 that dates a past event after its source (`published_at` of a live page is
 the day the page was created).
 
+### Every wrong row gets its cause, written down
+
+Before step 4, write `causes.md` in the audit folder: one line per false
+contradiction and per wrong fact, vote, stance or entity (the user,
+2026-11-14: "explain why contradictions were false and investigate if that
+deserves a new golden entry and a change in prompt or logic, and the same for
+the invalid facts"). A verdict alone is not enough; each line answers:
+
+1. **What is wrong**, in one sentence a reader of the site would accept.
+2. **Which stage made it**: the page text (fetch, extractor: read
+   `source_documents.content` around the quote), the extraction prompt, the
+   grounding, the statement date, the entity validator, the vote resolver
+   (`backend/plugins/frpolitics`), the stance judge, the verify judge. Read
+   the code or the prompt of that stage; do not guess from the row.
+3. **Was it already covered?** Search the rules, the goldens and the tests
+   for the case. A rule that existed when the row was made and was not
+   applied needs a golden from this row (the rule is not enough as written); no
+   rule: a rule and a golden; a code path: a fix and a unit test; a row made
+   before the rule that covers it: nothing new, say which rule.
+4. **How many more**: the sweep of "One bad row means a search of the whole
+   database", with its count.
+5. **The decision**: the change shipped in step 4, or the bd issue with the
+   numbers when the fix is a design change, or "one-off, noted" with the
+   reason. "Below 3 %" is a reason not to fix now only after 1 to 4 are
+   answered: a rare row with a systematic cause (a ballot matched to another
+   bill's amendment, a teaser of another article dated at the page's date) is
+   fixed whatever its rate.
+
+The report gives this list as a table (row, what is wrong, stage, covered
+before?, sweep count, decision).
+
 ## 4. Fix — the part that makes the next audit shorter
 
 Branch: `git checkout -b fix/review-<MMDD>`.
@@ -349,7 +380,8 @@ The report, in this order, short:
 2. Contradictions: real / debatable / false, and the causes of the false ones,
    new rows and re-reviewed old rows apart.
 3. Each sample's error rate by type, new window and history band side by side,
-   with two examples.
+   with two examples, then the table of causes (`causes.md`): every wrong
+   row, the stage that made it, and what was changed for it.
 4. What was fixed (rules, code, goldens table), the PR and the deploy.
 5. What waits for the user: the cleanup script, decisions to take.
 6. The bd issues filed.

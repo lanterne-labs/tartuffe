@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // ScrutinObjectType classifies WHAT a scrutin voted on. Scrutin titles are
@@ -186,6 +188,16 @@ func resolveVotedObjectWith(ctx context.Context, law Law, orgCache map[string]Or
 	if info == nil {
 		return "", false, false, nil
 	}
+	if !sameAuthor(law.Title, info.AuthorLabel) {
+		// Several bills hold an amendment with this number, and the only
+		// one sorted on the day of the scrutin is another bill's: prod
+		// scrutin 1317 (2025-04-08, "l'amendement n° 2 de M. Sitzenstuhl" on
+		// the Paris-Lyon-Marseille bill) carried amendment n° 2 of the
+		// France Médias bill on its 175 ballots.
+		log.Warn().Str("scrutin", law.Title).Str("signatories", info.AuthorLabel).Int("numero", numero).
+			Msg("frpolitics: the amendment found is not by the author the scrutin names; gating")
+		return "", false, false, nil
+	}
 	purpose, stated, err := amendments.purpose(ctx, law, info)
 	if err != nil {
 		return "", false, false, err
@@ -209,6 +221,48 @@ func resolveVotedObjectWith(ctx context.Context, law Law, orgCache map[string]Or
 		}
 	}
 	return fmt.Sprintf("%s n° %d%s %s", label, numero, group, purpose), true, stated, nil
+}
+
+// scrutinAuthorRe pulls the author a scrutin title names after the number
+// ("l'amendement n° 2 de M. Sitzenstuhl et les amendements identiques").
+var scrutinAuthorRe = regexp.MustCompile(`n°\s*\d+\s+de\s+(?:M\.|Mme)\s+([\p{L}' -]+?)(?:\s+et\s|\s+à\s|\s+au\s|\s+après\s|\s+avant\s|\s+\(|,|$)`)
+
+// sameAuthor reports whether the amendment's signatories (the author first)
+// agree with the author the scrutin title names. With no name in the title
+// (an amendment of the government or of a committee) or no signatories in
+// the archive there is nothing to compare: true.
+func sameAuthor(title, signatories string) bool {
+	m := scrutinAuthorRe.FindStringSubmatch(title)
+	if m == nil || strings.TrimSpace(signatories) == "" {
+		return true
+	}
+	first, _, _ := strings.Cut(signatories, ",")
+	return strings.Contains(foldName(first), foldName(m[1]))
+}
+
+// foldName lowers a name and drops its accents, spaces, hyphens and apostrophes.
+func foldName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch r {
+		case 'é', 'è', 'ê', 'ë':
+			r = 'e'
+		case 'à', 'â', 'ä':
+			r = 'a'
+		case 'î', 'ï':
+			r = 'i'
+		case 'ô', 'ö':
+			r = 'o'
+		case 'ù', 'û', 'ü':
+			r = 'u'
+		case 'ç':
+			r = 'c'
+		case ' ', '-', '\'', '’', '\u00a0':
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // censureAlineaRe pulls the paragraph of article 49 out of a censure motion

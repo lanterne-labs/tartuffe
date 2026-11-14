@@ -1385,3 +1385,15 @@ cases:
     date_a: "2024-03-12"
     date_b: "2024-03-12"
 
+  # ---- The journalist's wording of what the person "prefers" is not the person's word
+  # ---- (the rule existed; the judge did not apply it: audit of 2026-11-14).
+  - name: "FP_2463_zemmour_journalist_says_he_prefers_remigration"
+    fact_a: "Éric Zemmour nie avoir prononcé le terme « déportation » à propos des musulmans de France, lui préférant celui de « remigration »."
+    fact_b: "Eric Zemmour a affirmé lors d'un débat avec Michel Onfray n'avoir jamais parlé de remigration et ne pas savoir ce que le mot veut dire."
+    claimed_reason: "Avoir choisi « remigration » pour remplacer le mot qu'il récusait suppose qu'il connaît ce terme et l'a fait sien, alors qu'il affirme n'en avoir jamais parlé."
+    expect: drop
+    bucket: different_subjects
+    notes: "The source of A reads 'un terme qu'Éric Zemmour nie avoir prononcé, lui préférant celui de « remigration »': the preference is the journalist's wording in 2025, no quote of his uses the word. Prod 2463 (2026-11-14)."
+    date_a: "2015-02-01"
+    date_b: "2021-01-01"
+

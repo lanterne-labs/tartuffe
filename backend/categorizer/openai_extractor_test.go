@@ -1099,3 +1099,35 @@ l'argumentation. Je propose de baisser les dépenses publiques qui rendent ces t
 		})
 	}
 }
+
+// A teaser of another article left at the end of the page is not the article:
+// prod fact 270341 dated a 2026 headline about Laurent Wauquiez at 2018, the
+// date of the lejdd.fr article it sat under (also 263709 and 256593).
+func TestRemoteLLMExtractor_TeaserOfAnotherArticle(t *testing.T) {
+	llmtest.Setup(t)
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+	mockText := `Eric Besson rejoint Xavier Bertrand
+
+INDISCRET - L'ancien ministre Eric Besson va adhérer à la Manufacture, l'association de Xavier Bertrand. « Je n'ai pas l'intention de revenir en politique », affirmait à l'époque l'ancien ministre de l'Identité nationale, qui dirige la société Eric Besson Consulting fondée en 2012. Toutefois, « si ponctuellement, on me demande de participer à une réflexion, je le ferai avec plaisir ».
+
+«Cela a trop duré» : Laurent Wauquiez souhaite un candidat unique de la droite «avant Noël» Le chef des députés LR appelle son camp à s'accorder sur un dispositif de désignation, afin de présenter un seul candidat de droite avant le début de l'année prochaine. Il écarte l'idée d'ajouter une candidature supplémentaire.
+
+«On a cru mourir» : une députée LFI blessée par un tir de mortier dans l'Essonne L'Insoumise Farida Amrani a été légèrement blessée par un tir de mortier d'artifice.`
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/teaser",
+		Title:   "Eric Besson rejoint Xavier Bertrand",
+		Content: mockText,
+	}
+	facts, err := extractorClient.ExtractFacts(context.Background(), "Xavier Bertrand", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts: %v", err)
+	}
+	for _, f := range facts {
+		if strings.Contains(f.NormalizedFactText, "Wauquiez") || strings.Contains(f.NormalizedFactText, "Amrani") {
+			t.Errorf("a fact from a teaser of another article: %q", f.NormalizedFactText)
+		}
+	}
+}
