@@ -85,8 +85,8 @@ func runWorker(cmd *cobra.Command, args []string) error {
 	}
 	if notifier := alerting.NewTelegramNotifierFromEnv(); notifier != nil {
 		opts.Notify = notifier.Send
-		// The first credit error of each LLM provider sends one message.
-		llm.OnCreditError = worker.CreditAlert(notifier.Send)
+		// No message for an API key out of credit (the owner, 2026-11-14: the
+		// key is spent every day, the endpoint halts and the logs say so).
 	}
 	// The judgement counters reach the database as the work goes, not only
 	// when the process ends.

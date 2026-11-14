@@ -196,8 +196,8 @@ Stop and fix before anything else when:
   `unavailable`, `overloaded`, `rate limit`, a timeout) — an outage that
   consumed the documents' attempts. The endpoint must have halted instead
   (`llm.ErrUnavailable`: the plugins put the work back; `claude_batch.go` `do`
-  and `callError` classify the API's answers, `OnCreditError` sends the
-  Telegram alert). Fix the classification with a case in
+  and `callError` classify the API's answers, no Telegram message since 2026-11-14,
+  the owner's choice: the logs say it). Fix the classification with a case in
   `TestClaudeAPIEndpoint_CreditErrorStopsTheRun`, then give the documents
   their attempts back (`dm documents retry --match <error text>`, dry run by
   default; `--apply` after the user's yes and once the cause is gone);
