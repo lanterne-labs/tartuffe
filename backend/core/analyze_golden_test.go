@@ -14,10 +14,10 @@ import (
 
 // analyzeKeyFact is one stance member in testdata/analyze_cases.yaml.
 type analyzeKeyFact struct {
-	ID   int64  `yaml:"id"`
-	Verb string `yaml:"verb"`
-	Text string `yaml:"text"`
-	Date string `yaml:"date"` // optional YYYY-MM-DD
+	ID   int64  `yaml:"id" json:"id"`
+	Verb string `yaml:"verb" json:"verb"`
+	Text string `yaml:"text" json:"text"`
+	Date string `yaml:"date" json:"date"` // optional YYYY-MM-DD
 }
 
 // analyzeCase is one row of testdata/analyze_cases.yaml.

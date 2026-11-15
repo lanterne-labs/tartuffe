@@ -9,6 +9,15 @@ package promptrules
 // ContradictionRulesAndExamples in backend/contradiction/openai_detector.go;
 // what all judges DO share is promptrules.FalsePositivePatterns.)
 //
+// The analyze judge FINDS: every pair it flags is then checked by the
+// verifier, which holds the full catalog of false positives. So this body
+// keeps the positive patterns and only the plain NO cases; a new NO rule
+// goes in false_positives.txt, not here. Measured on 2026-11-15 on 197
+// production cases (TestAnalyzeReplay), with and without the short copy of
+// the catalog that used to be here (35 KB against 23.5 KB): 53 and 57 pairs
+// flagged, 44 and 45 verifier calls, 35 and 36 of 48 reviewed-real
+// contradictions kept, no contradiction kept on 149 recent facts either way.
+//
 // Because the analyze judge is the one that CREATES contradiction edges,
 // changes here are tested by TestAnalyzeGolden
 // (backend/core/testdata/analyze_cases.yaml) — and, usefully, tuning this
@@ -42,37 +51,20 @@ A breaker does NOT invalidate a promise when:
 - SELF-EXEMPTING DOUBLE STANDARD (hypocrisy): The person publicly demanded a RULE or SANCTION for a CLASS of people (e.g. "anyone convicted should be ineligible for life / must resign / should be barred / should be punished"), and the person's OWN later action or claim exempts THEMSELVES from that very rule once they demonstrably belong to that class (e.g. they were themselves convicted of that offense yet run for or keep the office). Holding others to a standard the person then refuses to apply to themselves IS a real contradiction. The fact that the person NOW falls into the targeted class may be established by the surrounding context or an authoritative finding (their own conviction) — the contradiction edge is still between the person's stated rule and their own self-exempting action. Requires ALL of: (a) a clear normative standard the person THEMSELVES stated (not merely attributed to their party, not a vague value); (b) the person clearly falls into the class the standard targets; (c) the self-exemption concerns the SAME sanction on the SAME axis. Do NOT stretch this to loose "he's a hypocrite" claims where any of (a)-(c) is missing.
   WHAT THE OTHER FACT MUST BE (check before emitting a self-exemption edge, whichever of the two is the NEW FACT): the rule is paired ONLY with the person's OWN utterance or act taking the exemption ("je suis éligible", "rien ne peut m'empêcher d'être candidate", "j'annonce ma candidature"). If either side is the sanction or the legal process itself (a fact tagged WAS_CONVICTED or WAS_SENTENCED, a conviction, a sentence, a court or appeal ruling, an ineligibility ruling, a prosecutor's request, an awaiting-verdict narration, a third party's account of the proceedings), do NOT emit the edge: the sanction is the class-membership TRIGGER and context, never the contradiction partner. "She demanded the convicted be barred" + "she was convicted" is her own rule being APPLIED: agreement, NEW_INFO, never CONTRADICTION.
 
-**NEGATIVE PATTERNS — these are NOT contradictions** (apply NARROWLY — these rules block real contradictions when over-applied):
-- DIFFERENT SUBJECTS: the two statements are about genuinely different actors, events, bills, or geographic regions. A YEARLY text named without its year (the budget, the PLF, the PLFSS) at dates about a year apart is two bills: "we will vote against this budget" (October 2025, the 2026 budget) and "amend the budget rather than block it" (October 2026, the 2027 budget) are positions on two texts, not a reversal. So are elections years apart, an amendment or an exemption named without an identifier in two successive finance texts, two meetings with different conveners, and an alliance or a primary for one election or perimeter (the presidential, a primary of the whole left with LFI) against one for another (the legislatives, the closed PS primary). A statement bounding ONE bill in preparation ("this bill will not go beyond what was voted") binds that bill, not a programme years later in another role. Also different subjects: a JUDGMENT of a leader ("Mélenchon est le boulet de la gauche") and a call to bring the left together including his party (only a stated refusal of that cooperation, or a formal alliance after denouncing the same target, is a reversal); a vote for a TARGET and a later pledge to abolish the TOOL named as its means (renovation goals backed by energy-saving certificates); two statements that assign an act to OPPOSITE actors ("no ambush was set against him" and "the other group set a trap": one story); two budget AGGREGATES (the State deficit and the public deficit, euros and share of GDP), which can move in opposite directions. Also: an article voted at two readings when its wording changed (two versions of the text); several outlets' figures of one presentation on one day (one plan read three ways); an assessment of a situation at its date ("les finances sont tenues", 2024) against a plan years later. Same person + same topic + different aspects is NOT this rule — it's just same subject with two facets, which CAN contradict.
+**NEGATIVE PATTERNS — these are NOT contradictions.** Only the plain cases are listed: every pair you flag is then checked by a verifier that holds the full list of false positives, so when a pair fits a positive pattern and none of these, FLAG it:
+- DIFFERENT SUBJECTS: the two statements are about genuinely different actors, events, bills, elections or regions (the budget of one year and the budget of the next are two texts). Same person + same topic + different aspects is NOT this rule — it's just same subject with two facets, which CAN contradict.
 - VAGUE vs SPECIFIC: one statement is generic, the other names specific people/dates/items, and there is no clear indication they refer to the same thing. (If context proves they refer to the same thing, it IS a contradiction — see PAIR 14.)
-- SUBJECTIVE AWARENESS vs OBJECTIVE FACT: "I wasn't aware of X happened" + "X did/didn't happen as fact" are compatible — denying X happened doesn't imply prior knowledge. THIS RULE COVERS ONLY past-awareness vs past-event. It does NOT excuse policy shifts, position shifts, or stated-condition walk-backs.
-- ADMINISTRATIVE ERROR vs CRIMINAL INTENT: admitting "things could have been more rigorous" / "an administrative error was made" / "I acted in good faith despite negligence" does NOT contradict denying a specific criminal charge. Only triggers when one statement admits an administrative shortcoming and the other denies CRIMINAL intent on the same matter — does NOT excuse softening of stated political positions.
-- COHERENT DEFENSE — strict version: two statements both deny the SAME SPECIFIC ALLEGATION (e.g. "I didn't order the fictitious hires" + "I didn't approve the fictitious hires") REINFORCE each other. Two statements that deny DIFFERENT specific allegations within the same case are also coherent. This rule does NOT cover statements about future conduct, candidacy, or political commitments — those can contradict freely.
-- CONSISTENT IGNORANCE: multiple "I didn't know X" / "I didn't know Y" claims about different facts of the same situation reinforce each other. Only fires when both statements are EXPLICIT claims of ignorance.
 - SAME POSITION IN DIFFERENT WORDS: paraphrases / translations of the same claim cannot contradict each other. Note: paraphrase requires that they make the same assertion — not just that they're about the same topic.
 - COMPLEMENTARY FACTS / SAME EVENT: different aspects of the same ruling, sentence, or event (prison + ineligibility, first-instance + appeal sentencing) are supplementary, not contradictory. This ALSO covers two COMPATIBLE EXPLANATIONS or CAUSES of the same problem that can both hold at once — e.g. "the failure is revealing of our bad organization" + "the failure is NOT due to a lack of resources" AGREE (it is an organizational, not a budgetary, cause) and REINFORCE each other. Naming one cause while ruling out a different, non-exclusive cause is not a contradiction. Only flag when the two explanations are genuinely mutually exclusive (cannot both be true).
 - LEGAL PROCESS STAGES: accusation → trial → conviction is sequential progression of the same case, not a contradiction (between THOSE stages — the person's own denial made after a conviction still contradicts it; a denial made before the first conviction is a plea, not a contradiction).
-- CONVICTION SCOPE: a general conviction does not automatically disprove every specific factual claim the person made about details of the case — only those the conviction specifically addresses.
-- BLAME FRAMING vs ACT: a claim about who is to blame in a conflict ("I have no problem with the media, the media have a problem with me") is not contradicted by the speaker's own hostile act within that conflict (excluding those outlets): the act fits the blame. Do not infer an attitude from an act and set it against the words; an act contradicts words only when the words state, promise or deny that act or a practice it breaks.
-- PLEDGE KEPT, WORDING REGRETTED: a person who still honours a pledge and only says it should have been worded otherwise ("I should have said the median wage, not the minimum wage; but I committed, so I do it") has not walked it back. NO.
-- SELF-POSITIONING: « ne pas se situer vis-à-vis de X » says how the person defines themself, not what they think of X: a judgement of X is no denial of it.
-- SELF-CORRECTION: a factual claim the person corrects within days, saying so (« nulle part » then « vu, page 70 »), is a correction, not a reversal.
-- PENALTY NICKNAMED A TAX: a fine or a penalty on a behaviour that the press calls a « taxe » (the « taxe lapin » on missed medical appointments, paid to the doctor) is not a tax rise: wanting it does not break a pledge of no tax increase. A new or higher levy that funds the State (a tax on profits, a VAT rise) does.
-- PARTY LABEL vs PERSONAL BACKING: saying a party should back neither of two candidates is about the party's investiture; the person's own personal support for one of them is not the thing refused.
-- WHOSE PROPOSAL: « ce n'est pas une position que nous défendons » said of a measure the person still wants implemented marks it as another's proposal, not a refusal of it.
-- DEADLINE MOVED: a deadline the person moves themself before it passed, with no act and no denial (« fin de l'année » then « fin mai » days later), is a pledge replaced, not broken, until the term passes unkept.
-- BUNDLED VOTE EXPLAINED: a vote against a text that bundles several things, explained the same day point by point (yes to the aid, no to the NATO clause), does not contradict the point the person said yes to.
 - DISOWNED CLAIM (a contradiction): the person's own words that explicitly withdraw the basis of a claim they made on the same subject: a disclaimer of knowledge after precise claims ("it's not my subject, I haven't studied it" after deportation figures), an admission that a figure was invented or a judged text was not read, a claim said to be made for effect. The withdrawal must be stated by the person; never infer it from an act.
-- REPORTED POSITION: a journalist's plain factual report of what the person asks for, proposes or did is the person's position, not the journalist's opinion. The journalist's judgement, motive or interpretation of the person is not. Nor is a verb the journalist chose for the person's state of mind (« il rêve de Matignon »): the person rejecting that word while pursuing the plan openly denies the wording, not the plan. A private remark the press reports (« selon l'Opinion », « aurait confié ») against the person's own public words is the press's word against theirs: NO.
 - ANNOUNCEMENT THEN ACTION: announcing X and then doing X is a FULFILLED commitment, the OPPOSITE of a contradiction.
-- QUALIFIED DENIAL: a denial hedged by a qualifier ("je n'ai jamais dit non PAR PRINCIPE à la primaire") is not contradicted by a practical objection ("une usine à gaz") to ONE FORM of the thing: principle and form are different scopes. And a reason must find each of its two horns IN its fact: two facts blaming the same cause (lower receipts) are one position, however the reason words it. A decision DEFERRED to after an event ("I will wait for the speech before deciding") and the decision taken once the event has passed is the announced sequence, whatever the decision. Likewise "no other solution than X" followed by X plus a second measure Y toward the same goal adds a lever, it does not drop X: not a reversal unless X is abandoned.
 
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
 2. Earlier "claimed X" → Later "denied X" = IS contradiction (cannot unknow)
 3. Same date conflicts: analyze carefully; the two must be incompatible, not two different claims
 3b. ORDER: a past-tense denial ("I have never proposed X") is contradicted only by an act or statement dated BEFORE it; a pledge about future conduct ("I will never criticise Z") only by an act dated AFTER it. A date written in the fact's text ("en octobre 2025", "en 2015") is the event's date, whatever the line's "(dated ...)" prefix, which is the source's.
-3c. A present state of mind with no pledge ("je n'y pense pas", "ce n'est pas d'actualité") commits to nothing: a decision a year later is a change of mind, not a contradiction. A pledge to a single candidacy with a named rival of the same camp ("we will not run against each other") is compatible with campaigning until one steps aside. Seeking allies to REACH a condition the person set ("no Matignon without an absolute majority", then "if a few deputies are missing I will reach out") pursues it; only taking the office without it breaks it. A pledge of loyalty to a leader or a party is not broken by an argument or an ultimatum inside that camp, only by leaving, running against, voting down or disowning them. A pledge to carry out a measure is not broken when it is suspended or postponed under an event outside the person's choice (a snap election called by another, a censure, a court ruling): only abandoning or opposing it breaks it. A pledge to rally behind or not to hinder a primary's winner binds only once someone else wins it: running « primaire ou pas », or withholding support without obstructing, is NO. A call for a collective act (« on doit tous quitter X ») not followed alone when the others did not move is NO. A pledge narrowed (a smaller version) or postponed (a later date) before any act, keeping its direction, is a revised programme, NO; renouncing it or stating its opposite stays YES. Declining to argue about X or to answer about it now (no voting instruction given before the first round) is not opposing X. Opposing a bill, then voting the text rewritten in CMP and saying why, is two versions, NO. A class rule (« pas de condamnation pour être parlementaire ») binds the office it names and the person themself, not an ally's candidacy to another office.
 4. Unknown dates: be SKEPTICAL, only flag if completely irreconcilable regardless of temporal ordering
 5. Both dates known, opposite OPINIONS on the SAME question: a contradiction ONLY when they are at most about three months apart and the person does not explain the change; further apart, or explained, it is an evolution of opinion (NEW_INFO). An ACT (vote, decision, alliance, candidacy) against stated words, a broken PROMISE or pledge and a DENIAL of the earlier position stay contradictions at any gap. It is not a reversal either when the two answer different questions, concern different events or texts, or one is a forecast.
 
@@ -121,27 +113,6 @@ Statement B (dated June 25, 2025): "Marine Le Pen a promis de mener la campagne 
 PAIR 5c: REASONING: Unlike 5b, A is a condition on her own CANDIDACY (not running under a bracelet), not a refusal to campaign. Campaigning for the ticket with Bardella does not require being its candidate, so B does not need what A excludes. Not COMMITMENT vs CARVE-OUT.
 PAIR 5c: NO: A condition on her candidacy and a pledge to campaign with a running mate are compatible.
 
-PAIR 7 (Unknown Dates - NO):
-Statement A (dated unknown date): "CEO Jones supported policy X."
-Statement B (dated unknown date): "CEO Jones opposed policy X."
-PAIR 7: REASONING: Both dates unknown. UNKNOWN DATES rule: the order is unknown, so this cannot be read as a reversal. With both dates known, the same pair would be a POSITION REVERSAL (YES).
-PAIR 7: NO: Without dates, the order of the two positions is unknown.
-
-PAIR 8 (Different Events - NO):
-Statement A (dated March 2022): "Senator Smith voted against bill H.R. 123."
-Statement B (dated June 2024): "Senator Smith sponsored bill H.R. 789."
-PAIR 8: NO: Different actions on different bills at different times.
-
-PAIR 9 (Person's Acknowledgment vs External Party's Action - NO):
-Statement A (dated January 20, 2024): "Marine Le Pen acknowledged that reproaches can be made to her party regarding parliamentary assistants."
-Statement B (dated January 20, 2024): "Marine Le Pen said the EU Parliament never advised or criticized her party about assistants."
-PAIR 9: NO: A is about her own acknowledgment that criticism is warranted; B is about what the EU Parliament did or didn't do. Different subjects.
-
-PAIR 11 (Trial / Accusation vs Denial - NO):
-Statement A (dated January 20, 2024): "Marine Le Pen a été jugée en appel pour détournement de fonds publics européens dans l'affaire des assistants parlementaires du FN."
-Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations."
-PAIR 11: NO: Being tried (a procedural step) is NOT a finding of guilt — it does not break her denial. Only a conviction or court finding would.
-
 PAIR 12 (Denial AFTER the Conviction - YES):
 Statement A (dated March 28, 2024): "Marine Le Pen a été reconnue coupable de détournement de fonds publics par la cour d'appel de Paris."
 Statement B (dated April 2, 2024): "Marine Le Pen a nié tout détournement de fonds publics."
@@ -156,26 +127,6 @@ PAIR 14 (Same Specific Reference - YES):
 Statement A (dated January 20, 2024): "Marine Le Pen said she discovered the emails between Schaffhauser and Saint-Just."
 Statement B (dated January 20, 2024): "Marine Le Pen claimed she had no knowledge of the emails between Schaffhauser and Saint-Just."
 PAIR 14: YES: Both statements explicitly reference the same specific emails — "discovered" directly contradicts "had no knowledge of".
-
-PAIR 17 (Conviction vs Acknowledgment of Imperfections - NO):
-Statement A: "Marine Le Pen a reconnu que 'beaucoup de choses auraient pu se passer de manière plus rigoureuse'."
-Statement B: "Marine Le Pen a été condamnée pour détournement de fonds publics."
-PAIR 17: NO: The conviction exceeds her acknowledgment but doesn't contradict it. Only an explicit denial of wrongdoing + conviction = contradiction.
-
-PAIR 18 (Coherent Defense - NO):
-Statement A: "Marine Le Pen a nié avoir donné des instructions d'embauche fictive."
-Statement B: "Marine Le Pen a rejeté les accusations de faute lourde dans la gestion des fonds européens."
-PAIR 18: NO: Two denials about different aspects of the same case form a consistent defense, not a contradiction.
-
-PAIR 21 (Legal Process Stages - NO):
-Statement A: "Le Rassemblement National est accusé de détournement de fonds publics."
-Statement B: "Marine Le Pen a été reconnue coupable de détournement de fonds publics."
-PAIR 21: NO: Accusation and conviction are sequential stages of the same case.
-
-PAIR 24 (Announcement Followed by Action - NO):
-Statement A (dated March 15, 2024): "Jean-Luc Mélenchon announced he would come to support his candidate in Lille on Thursday evening."
-Statement B (dated March 18, 2024): "Jean-Luc Mélenchon came to support the candidacy of Lahouaria Addouche in Lille."
-PAIR 24: NO: Announcing support and then providing it is a fulfilled commitment, not a contradiction.
 
 PAIR 27 (Broad Value Statement vs Opposing Action - YES):
 Statement A (dated March 15, 2024): "Sophie Martin a promis de reconstruire l'artisanat français pour redonner du pouvoir d'achat aux Français."

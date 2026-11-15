@@ -296,7 +296,7 @@ the invalid facts"). A verdict alone is not enough; each line answers:
    (`backend/plugins/frpolitics`), the stance judge, the verify judge. Read
    the code or the prompt of that stage; do not guess from the row.
 3. **Was it already covered?** Read the WHOLE rulebook before answering
-   (`false_positives.txt`, the short forms in `contradiction.go`, `verify.go`,
+   (`false_positives.txt`, `contradiction.go`, `verify.go`,
    `fact_extraction.go`), not a search for a keyword: on 2026-11-14 a case
    called "no rule" was one clause away from an existing rule, and a pair
    reviewed real was the very example of another (ONE ACT, TWO DESCRIPTIONS).
@@ -324,9 +324,13 @@ Branch: `git checkout -b fix/review-<MMDD>`.
 
 For each **judgement gap** (a false row no current rule explains):
 1. A rule in `false_positives.txt` under an existing `[bucket]` token (the
-   auditor's enum is closed; no `%` in that file), and its short form in
-   `contradiction.go` (the stance judge, which creates the edges, does not read
-   the catalog).
+   auditor's enum is closed; no `%` in that file). Nothing goes in
+   `contradiction.go`: the stance judge only FINDS candidates, and every
+   pair it flags is checked by the verifier, which reads the catalog. Its
+   short copy of the NO rules was removed on 2026-11-15 after a replay of
+   197 production cases gave the same flags, verifier calls and real
+   contradictions kept with and without it (`TestAnalyzeReplay`). A change
+   to `contradiction.go` is for a contradiction the judge does not FIND.
 2. A golden in `backend/contradiction/testdata/verify_cases.yaml` built from
    the real pair (`FP_<id>_<person>_<what>`, `expect: drop`, the dates).
 3. A child issue of the epic `mirror-ds6` (keep the epic open).
