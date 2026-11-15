@@ -9,6 +9,15 @@ package promptrules
 // ContradictionRulesAndExamples in backend/contradiction/openai_detector.go;
 // what all judges DO share is promptrules.FalsePositivePatterns.)
 //
+// The analyze judge FINDS: every pair it flags is then checked by the
+// verifier, which holds the full catalog of false positives. So this body
+// keeps the positive patterns and only the plain NO cases; a new NO rule
+// goes in false_positives.txt, not here. Measured on 2026-11-15 on 197
+// production cases (TestAnalyzeReplay), with and without the short copy of
+// the catalog that used to be here (35 KB against 23.5 KB): 53 and 57 pairs
+// flagged, 44 and 45 verifier calls, 35 and 36 of 48 reviewed-real
+// contradictions kept, no contradiction kept on 149 recent facts either way.
+//
 // Because the analyze judge is the one that CREATES contradiction edges,
 // changes here are tested by TestAnalyzeGolden
 // (backend/core/testdata/analyze_cases.yaml) — and, usefully, tuning this
