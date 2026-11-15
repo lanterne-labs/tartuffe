@@ -1393,7 +1393,8 @@ cases:
     claimed_reason: "Avoir choisi « remigration » pour remplacer le mot qu'il récusait suppose qu'il connaît ce terme et l'a fait sien, alors qu'il affirme n'en avoir jamais parlé."
     expect: drop
     bucket: different_subjects
-    notes: "The source of A reads 'un terme qu'Éric Zemmour nie avoir prononcé, lui préférant celui de « remigration »': the preference is the journalist's wording in 2025, no quote of his uses the word. Prod 2463 (2026-11-14)."
+    judges: ["verify"]
+    notes: "The source of A reads 'un terme qu'Éric Zemmour nie avoir prononcé, lui préférant celui de « remigration »': the preference is the journalist's wording in 2025, no quote of his uses the word. Prod 2463 (2026-11-14). The auditor keeps it (2026-11-15, on main and on the shortened catalog alike): verify only."
     date_a: "2015-02-01"
     date_b: "2021-01-01"
 
@@ -1405,7 +1406,8 @@ cases:
     claimed_reason: "Lisnard a demandé la démission de Macron fin août 2025, puis a affirmé en octobre ne pas y appeler, ce qui nie sa propre position antérieure."
     expect: drop
     bucket: third_party_narrative
-    notes: "B is La Provence's label of his speech ('demande la démission d'Emmanuel Macron et se positionne...'), no quote; A is his own wording ('Je n'appelle pas à sa démission, je ne suis pas un factieux', he asks for a presidential election in June). Prod 2471 (2026-11-14)."
+    judges: ["verify"]
+    notes: "B is La Provence's label of his speech ('demande la démission d'Emmanuel Macron et se positionne...'), no quote; A is his own wording ('Je n'appelle pas à sa démission, je ne suis pas un factieux', he asks for a presidential election in June). Prod 2471 (2026-11-14). The auditor names the right rule and answers ambiguous (2026-11-15, 3 runs of 3): verify only."
     date_a: "2025-10-10"
     date_b: "2025-08-30"
 
