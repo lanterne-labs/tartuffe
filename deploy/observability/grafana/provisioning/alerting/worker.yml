@@ -1,8 +1,7 @@
 apiVersion: 1
 
-# The worker alerts on the job_metrics rows of the application Postgres: they
-# say when the feed and the maintenance pass last ended, also when the worker
-# itself is down. The alerts go to the Telegram chat of the worker: the
+# No alert rule is left here: the worker's daily digest (backend/digest) says
+# what needs someone. A new alert goes to the Telegram chat of the worker: the
 # contact point "telegram" is written at the start of Grafana
 # (s6-rc.d/grafana/run) from TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID of the
 # observability service (e.g. ${{worker.TELEGRAM_BOT_TOKEN}}); without them
@@ -16,51 +15,12 @@ policies:
     group_interval: 30m
     repeat_interval: 12h
 
-# The alert "No maintenance pass ended for 12 h" fired most days (a pass
-# waits up to MAINTENANCE_EVERY_HOURS, 24 on the worker) and told nothing to
-# act on: the worker's daily digest (backend/digest) now says when a pass is
-# stuck.
+# The alerts "No maintenance pass ended for 12 h" (fired most days: a pass
+# waits up to MAINTENANCE_EVERY_HOURS, 24 on the worker) and "Feed of the day
+# missing after 06:00 UTC" (repeated every 12 h in the chat) told nothing the
+# digest does not: it names a stuck pass and a missing feed once a day.
 deleteRules:
   - orgId: 1
     uid: worker-maintenance-stale
-
-groups:
   - orgId: 1
-    name: worker
-    folder: Alerts
-    interval: 5m
-    rules:
-      # The feed runs after 03:00 UTC (the AN archive is refreshed around
-      # 02:05); by 06:00 the feed of the day has ended.
-      - uid: worker-feed-missing
-        title: Feed of the day missing after 06:00 UTC
-        condition: C
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: mirrordb
-            model:
-              refId: A
-              format: table
-              rawQuery: true
-              editorMode: code
-              rawSql: |
-                SELECT CASE
-                  WHEN now() >= (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '6 hours') AT TIME ZONE 'UTC'
-                   AND coalesce(max(created_at), 'epoch'::timestamptz) < (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '3 hours') AT TIME ZONE 'UTC'
-                  THEN 1 ELSE 0 END AS feed_missing
-                FROM job_metrics WHERE job_type = 'feed'
-          - refId: C
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: A
-              conditions:
-                - evaluator: {type: gt, params: [0]}
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 0s
-        labels: {severity: warning}
-        annotations:
-          summary: The feed of today has not ended. The worker runs it when no task is pending; a task or a maintenance pass that does not end holds it.
+    uid: worker-feed-missing
