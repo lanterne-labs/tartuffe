@@ -11,7 +11,7 @@
 	import ReportButton from './ReportButton.svelte';
 	import { tr, pickLang, whyOf, type Lang } from '$lib/i18n';
 	import { sourceDomain } from '$lib/sources';
-	import { factYear, statementDateText } from '$lib/dates';
+	import { factDateText } from '$lib/dates';
 	import { personPath, sharePath, displayName } from '$lib/share';
 	import type { FeedItem, FeedFactSide } from '$lib/types';
 
@@ -38,7 +38,7 @@
 	let rise = $derived(item.score_effect != null && item.score_effect < 0 ? Math.max(1, Math.round(-item.score_effect)) : 0);
 
 	function dateOf(f: FeedFactSide): string {
-		return statementDateText(f.date, f.date_precision, lang) || factYear(f.date, f.date_precision);
+		return factDateText(f.date, f.date_precision, lang);
 	}
 	function textOf(f: FeedFactSide): string {
 		return pickLang(f.text, f.text_en, lang);

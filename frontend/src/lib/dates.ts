@@ -4,14 +4,6 @@
 // of its first source, a full date with no precision.
 export type DatePrecision = 'year' | 'month' | 'day';
 
-// factYear is the year of a fact's date. A statement date is a UTC midnight:
-// read in local time west of Greenwich, "2013" would show as 2012.
-export function factYear(iso: string | null | undefined, precision?: string | null): string {
-	if (!iso) return '';
-	const d = new Date(iso);
-	return String(precision ? d.getUTCFullYear() : d.getFullYear());
-}
-
 // statementDateText prints a statement date as precisely as it is known ("2013",
 // "mars 2024", "14 mars 2024"); '' for a source's date, which the caller
 // prints its own way.
@@ -22,4 +14,12 @@ export function statementDateText(iso: string | null | undefined, precision: str
 	if (precision === 'year') return String(d.getUTCFullYear());
 	if (precision === 'month') return d.toLocaleDateString(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' });
 	return d.toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+// factDateText prints the date of a fact as precisely as it is known: a
+// statement date at its precision, a source's date as its full day.
+export function factDateText(iso: string | null | undefined, precision: string | null | undefined, lang: string): string {
+	if (!iso) return '';
+	if (precision) return statementDateText(iso, precision, lang);
+	return new Date(iso).toLocaleDateString(lang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 }

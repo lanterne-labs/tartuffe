@@ -16,6 +16,9 @@ type SearchResult struct {
 	Title string
 	// Snippet is a brief description or snippet from the content, if available.
 	Snippet string
+	// Date is the publication date the search engine shows for the page, as
+	// it writes it ("7 déc. 2021"); empty when it gives none.
+	Date string
 }
 
 // NewsSearcher is the interface for news search providers (Serper, Brave, SerpAPI, etc.).

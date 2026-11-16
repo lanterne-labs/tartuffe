@@ -13,6 +13,7 @@ import (
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/pipeline"
 	"digital-mirror/backend/plugins"
+	"digital-mirror/backend/statementday"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/translate"
 
@@ -29,6 +30,9 @@ const (
 	// translateLimit caps how many translations a pass fills, so a large
 	// first-time backlog drains over several passes.
 	translateLimit = 4500
+	// statementDayLimit caps how many statements a pass searches the exact
+	// day of (two LLM calls and two web searches each).
+	statementDayLimit = 300
 	// explainLimit caps how many contradiction explanations a pass writes
 	// (one LLM call each), the newest contradictions first.
 	explainLimit = 500
@@ -576,6 +580,11 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) (err er
 	if err := step("audit", h.auditIfDue(ctx)); err != nil {
 		return err
 	}
+	// The exact day of the statements known to the year or the month, before
+	// the explanations: a new date writes the explanation again.
+	if err := step("statement days", h.statementDays(ctx)); err != nil {
+		return err
+	}
 	// 7. The explanations the site shows with the contradictions.
 	if err := step("explain", h.explain(ctx)); err != nil {
 		return err
@@ -656,6 +665,22 @@ func (h *Housekeeping) auditIfDue(ctx context.Context) error {
 		log.Info().Int("checked", res.Total).Int("evicted", res.Deleted).Int("unstable", res.Unstable).Msg("Maintenance: contradiction audit done")
 	}
 	return nil
+}
+
+// statementDays searches the web for the exact day of the candidates'
+// statements dated to a year or a month, statementDayLimit at most, those
+// of a contradiction first.
+func (h *Housekeeping) statementDays(ctx context.Context) error {
+	finder, err := statementday.NewFinderFromEnv()
+	if err != nil {
+		return fmt.Errorf("statement day finder unavailable: %w", err)
+	}
+	res, err := statementday.Run(ctx, h.Storer, finder, statementday.Options{Limit: statementDayLimit, Apply: true})
+	if res.Searched > 0 || res.Failed > 0 {
+		log.Info().Int("searched", res.Searched).Int("found", res.Found).Int("failed", res.Failed).
+			Msg("Maintenance: statement days searched")
+	}
+	return err
 }
 
 // explain writes the explanation of the candidates' contradictions that have
