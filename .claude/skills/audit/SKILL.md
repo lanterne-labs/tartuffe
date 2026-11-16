@@ -148,33 +148,6 @@ readings:
 - An error that is none of these: read the lines around it in
   `logs/worker_errors.log` and find its cause before the samples.
 
-### The X bot
-
-The same script writes `logs/xbot.log`. Read it with the bot's table:
-
-```sql
-select id, kind, status, contradiction_id, slot, created_at, decided_at, posted_at, tweet_id, error, variants from x_posts where created_at >= :since order by id;
-```
-
-- every slot of the window (`XBOT_SLOTS`, `XBOT_VOTE_SLOTS`) has a row, or a
-  reason: the silence, no candidate left, the LLM down until after the slot
-  (`the draft is tried again every tick until its slot`);
-- `reading Telegram failed … Conflict: terminated by other getUpdates
-  request`: another process reads the same bot (a local `dm worker run` or
-  `dm bot` with the production token, a second worker). The taps on the drafts
-  are lost while it lasts: find the other reader and stop it. The bot sends a
-  Telegram alert after 5 minutes of it (since 2026-11-12; on 2026-11-11 it
-  lasted 4 h 30 and the day's draft expired undecided);
-- a row `expired`: nobody decided. Say so in the report; it is the owner's
-  call, not a bug, unless the Conflict above was running;
-- a row with an `error`, or `approved` and not posted an hour after its slot:
-  a bug (the X API answer is in `error`);
-- read the variants of each draft as a tweet the site signs: a « quote » must
-  be in the source quotes word for word, the dates at their precision, no
-  insult, and the contradiction behind it must be one you would review real.
-  A draft on a contradiction you find false is a finding of step 2: review it
-  false, and it leaves the bot's picks.
-
 ### The extraction: did the pipeline work at all?
 
 The last rows of `measure.sql` judge the extraction itself, before the

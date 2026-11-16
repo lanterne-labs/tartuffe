@@ -38,11 +38,11 @@ func (d statementDate) of(source *time.Time) *time.Time {
 	return backend.FactDate(d.date, d.precision, source)
 }
 
-// shownDateSQL is the date the site shows for fact alias f: its statement
+// ShownDateSQL is the date the site shows for fact alias f: its statement
 // date, else earliest (an SQL expression: the date of its first source). The
 // precision of a statement date is the column f.statement_date_precision,
 // NULL for a source's date, which is a full date.
-func shownDateSQL(f, earliest string) string {
+func ShownDateSQL(f, earliest string) string {
 	return fmt.Sprintf("COALESCE(%s.statement_date::timestamp AT TIME ZONE 'UTC', %s)", f, earliest)
 }
 

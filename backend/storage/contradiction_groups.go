@@ -371,8 +371,8 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 		       g.group_summary, g.group_summary_en,
 		       fb.fact_text, COALESCE(fb.fact_text_en,''),
 		       sp.fact_text, COALESCE(sp.fact_text_en,''),
-		       COALESCE(fsb.urls, '{}'), ` + shownDateSQL("fb", "fsb.earliest") + `, fb.statement_date_precision,
-		       COALESCE(fss.urls, '{}'), ` + shownDateSQL("sp", "fss.earliest") + `, sp.statement_date_precision,
+		       COALESCE(fsb.urls, '{}'), ` + ShownDateSQL("fb", "fsb.earliest") + `, fb.statement_date_precision,
+		       COALESCE(fss.urls, '{}'), ` + ShownDateSQL("sp", "fss.earliest") + `, sp.statement_date_precision,
 		       ` + restatementsJSON("g.base_id") + `, ` + restatementsJSON("g.spoke_id") + `,
 		       blk.n, blk.mine, clk.n, clk.mine
 		FROM g

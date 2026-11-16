@@ -67,7 +67,7 @@ func TestDigest(t *testing.T) {
 	// The next day: two more ballots, and things to look at.
 	now = now.Add(24 * time.Hour)
 	ballots = 16
-	store.counts = Counts{Facts: 10, FailedTasks: 2, FailedPosts: 1}
+	store.counts = Counts{Facts: 10, FailedTasks: 2}
 	store.jobs["maintenance"] = now.Add(-50 * time.Hour)
 	store.jobs["feed"] = now.Add(-26 * time.Hour)
 	logger := zerolog.New(io.Discard).Hook(errs)
@@ -78,7 +78,7 @@ func TestDigest(t *testing.T) {
 	require.NoError(t, d.Tick(ctx))
 	require.Len(t, sent, 2)
 	assert.Contains(t, sent[1], "Vote : 16 bulletins (+2)\n")
-	assert.Contains(t, sent[1], "⚠️ À regarder : maintenance bloquée depuis 50 h ; le flux du jour n'a pas tourné ; 2 collecte(s) en échec ; 1 tweet(s) non publié(s) ; 50 erreurs dans les logs")
+	assert.Contains(t, sent[1], "⚠️ À regarder : maintenance bloquée depuis 50 h ; le flux du jour n'a pas tourné ; 2 collecte(s) en échec ; 50 erreurs dans les logs")
 	assert.Equal(t, store.last, store.since, "it covers the time since the last digest")
 	assert.Equal(t, 0, errs.Count(), "the count starts again")
 }

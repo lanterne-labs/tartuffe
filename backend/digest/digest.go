@@ -33,8 +33,8 @@ type Store interface {
 
 // Counts is what happened over the period of a digest.
 type Counts struct {
-	Facts, Contradictions    int
-	FailedTasks, FailedPosts int
+	Facts, Contradictions int
+	FailedTasks           int
 }
 
 // Digest sends one message a day at Hour:Min of Zone.
@@ -150,9 +150,6 @@ func (d *Digest) attention(ctx context.Context, now time.Time, c Counts) ([]stri
 	}
 	if c.FailedTasks > 0 {
 		out = append(out, fmt.Sprintf("%d collecte(s) en échec", c.FailedTasks))
-	}
-	if c.FailedPosts > 0 {
-		out = append(out, fmt.Sprintf("%d tweet(s) non publié(s)", c.FailedPosts))
 	}
 	if d.Errors != nil {
 		if n := d.Errors.Count(); n >= ErrorsWorthALook {
