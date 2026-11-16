@@ -15,7 +15,8 @@ import (
 // factsStatementDaysCmd finds on the web the exact day of the statements
 // known only to the year or the month (backend/statementday): the site then
 // shows "8 avril 2013" where it showed "2013". Two LLM calls and two web
-// searches per fact; a fact searched once is not searched again.
+// searches per fact, then up to five pages read when the results give no
+// day; the article that gives a day is queued for the news extraction; a fact searched once is not searched again.
 var factsStatementDaysCmd = &cobra.Command{
 	Use:         "statement-days",
 	Short:       "Find on the web the exact day of the statements dated to a year or a month (the candidates' by default)",
@@ -46,7 +47,7 @@ func runFactsStatementDays(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer storer.Close()
-	finder, err := statementday.NewFinderFromEnv()
+	finder, err := deps.New(storer).StatementDayFinder()
 	if err != nil {
 		return fmt.Errorf("statement day finder: %w", err)
 	}
@@ -64,7 +65,7 @@ func runFactsStatementDays(cmd *cobra.Command, args []string) error {
 	if apply {
 		mode = "written"
 	}
-	fmt.Printf("%d facts searched: %d days found, %d left at their year or month; %d failed (%s)\n",
-		res.Searched, res.Found, res.Searched-res.Found, res.Failed, mode)
+	fmt.Printf("%d facts searched: %d days found, %d left at their year or month, %d dating articles queued for extraction; %d failed (%s)\n",
+		res.Searched, res.Found, res.Searched-res.Found, res.Queued, res.Failed, mode)
 	return err
 }

@@ -3,11 +3,13 @@ package statementday
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"digital-mirror/backend"
+	"digital-mirror/backend/extractor"
 )
 
 // TestLive runs the finder on real statements with the real search and LLM:
@@ -33,7 +35,11 @@ func TestLive(t *testing.T) {
 	if err := json.Unmarshal(raw, &facts); err != nil {
 		t.Fatal(err)
 	}
-	finder, err := NewFinderFromEnv()
+	pages, err := extractor.NewExtractorFromType("auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finder, err := NewFinderFromEnv(ExtractorReader(pages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +57,11 @@ func TestLive(t *testing.T) {
 		if got.Day != nil {
 			found++
 		}
-		t.Logf("fact %d (%s, %s) %s\n  day: %s\n  url: %s\n  evidence: %s\n  why: %s", f.ID, f.Person, f.Known, f.Text, backend.FormatFactDateISO(got.Day), got.URL, got.Evidence, got.Reasoning)
+		article := "-"
+		if page := articleOf(got); page != nil {
+			article = fmt.Sprintf("%d runes, published %s", len([]rune(page.Text)), backend.FormatFactDateISO(page.Published))
+		}
+		t.Logf("fact %d (%s, %s) %s\n  day: %s\n  url: %s\n  evidence: %s\n  article to queue: %s\n  why: %s", f.ID, f.Person, f.Known, f.Text, backend.FormatFactDateISO(got.Day), got.URL, got.Evidence, article, got.Reasoning)
 	}
 	t.Logf("%d of %d statements got a day", found, len(facts))
 }

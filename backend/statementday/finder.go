@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"digital-mirror/backend"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/search"
@@ -37,7 +39,13 @@ type Found struct {
 	Day       *time.Time
 	URL       string // the result that gives the day
 	Evidence  string // its words that give it
+	How       string // "stated": the text writes the day out; "published": the day of a text of the statement's own days
 	Reasoning string
+	// Page is the page that gives the day, when it was read: an article of
+	// the statement's time, worth extracting for its other facts.
+	Page *Page
+
+	pub time.Time // the publication date a "published" day from the results was checked against
 }
 
 // Searcher is the web search the finder asks (search.WebSearcher).
@@ -48,20 +56,22 @@ type Searcher interface {
 // Finder finds the day of a statement.
 type Finder struct {
 	search Searcher
+	read   Reader // nil: the search results only
 	chat   func(ctx context.Context, req llm.ChatRequest) (string, error)
 }
 
-// NewFinder builds a finder on a searcher and an LLM client.
-func NewFinder(s Searcher, client *llm.Client) *Finder {
-	return &Finder{search: s, chat: func(ctx context.Context, req llm.ChatRequest) (string, error) {
+// NewFinder builds a finder on a searcher, an LLM client and a reader of
+// pages (nil: the finder reads the search results only).
+func NewFinder(s Searcher, client *llm.Client, read Reader) *Finder {
+	return &Finder{search: s, read: read, chat: func(ctx context.Context, req llm.ChatRequest) (string, error) {
 		content, _, err := client.Chat(ctx, req)
 		return content, err
 	}}
 }
 
 // NewFinderFromEnv builds the finder on the configured search chain and LLM
-// endpoint.
-func NewFinderFromEnv() (*Finder, error) {
+// endpoint, with read to read the pages found.
+func NewFinderFromEnv(read Reader) (*Finder, error) {
 	s, err := search.NewWebSearcherFromEnv()
 	if err != nil {
 		return nil, err
@@ -70,7 +80,7 @@ func NewFinderFromEnv() (*Finder, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewFinder(s, client), nil
+	return NewFinder(s, client, read), nil
 }
 
 const (
@@ -209,15 +219,68 @@ func (f *Finder) Find(ctx context.Context, st Statement) (Found, error) {
 	if err != nil {
 		return Found{}, fmt.Errorf("statement day: parsing %q: %w", content, err)
 	}
-	return check(st, results, reply), nil
+	found := check(st, results, reply)
+	if f.read == nil {
+		return found, nil
+	}
+	if found.Day != nil {
+		// The page of the result that gives the day, for the caller to
+		// queue: the day stands without it.
+		if !isArticleURL(found.URL) {
+			return found, nil
+		}
+		page, err := f.read.Read(ctx, found.URL)
+		if err != nil {
+			log.Debug().Err(err).Str("url", found.URL).Msg("statement day: the dating page could not be read")
+			return found, nil
+		}
+		// A day taken from the date the search engine shows for a page
+		// stands only when the page agrees: the engine often shows the
+		// date of an update. When the page gives another date, the pages
+		// are read for the day instead.
+		if found.How != "published" || page.Published == nil || sameDay(*page.Published, found.pub) {
+			found.Page = &page
+			return found, nil
+		}
+		found = Found{Reasoning: "refused (the page gives another publication date than the search): " + found.Reasoning}
+	}
+	// The results alone give no day: the pages may.
+	inPages, err := f.findInPages(ctx, st, results)
+	if err != nil {
+		return Found{}, err
+	}
+	if inPages.Day == nil {
+		inPages.Reasoning = found.Reasoning + " | " + inPages.Reasoning
+	}
+	return inPages, nil
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// check keeps the day of a reply only when the code can hold it to the
-// results: a real day inside the known period, not after the source, given
-// by a result whose text holds the evidence.
+// check keeps the day a reply gives from the search results only when the
+// result it names holds it (checkDay).
 func check(st Statement, results []search.SearchResult, reply dayReply) Found {
+	if reply.Day != nil && strings.TrimSpace(*reply.Day) != "" && !strings.EqualFold(strings.TrimSpace(*reply.Day), "null") {
+		if reply.Result == nil || *reply.Result < 1 || *reply.Result > len(results) {
+			return Found{Reasoning: "refused (no result named): " + reply.Reasoning}
+		}
+	} else {
+		return Found{Reasoning: reply.Reasoning}
+	}
+	r := results[*reply.Result-1]
+	pub, hasPub := parsePubDate(r.Date)
+	out := checkDay(st, reply, r.Title+" "+r.Snippet, pub, hasPub)
+	if out.Day != nil {
+		out.URL, out.pub = r.URL, pub
+	}
+	return out
+}
+
+// checkDay keeps the day of a reply only when the code can hold it to the
+// text it was read from (a search result, a page): a real day inside the
+// known period, not after the source, either written out in the text or the
+// day of a text published in the statement's own days.
+func checkDay(st Statement, reply dayReply, text string, pub time.Time, hasPub bool) Found {
 	out := Found{Reasoning: reply.Reasoning}
 	refuse := func(why string) Found {
 		out.Reasoning = "refused (" + why + "): " + reply.Reasoning
@@ -243,10 +306,6 @@ func check(st Statement, results []search.SearchResult, reply dayReply) Found {
 	if st.SourceDate != nil && day.After(st.SourceDate.UTC()) {
 		return refuse("after the source")
 	}
-	if reply.Result == nil || *reply.Result < 1 || *reply.Result > len(results) {
-		return refuse("no result named")
-	}
-	r := results[*reply.Result-1]
 	evidence := ""
 	if reply.Evidence != nil {
 		evidence = strings.TrimSpace(*reply.Evidence)
@@ -257,29 +316,45 @@ func check(st Statement, results []search.SearchResult, reply dayReply) Found {
 	}
 	switch how {
 	case "stated":
-		// The result writes the day out: its words are in the result and
-		// carry the number of the day.
-		if !holds(r.Title+" "+r.Snippet, evidence) {
-			return refuse("the evidence is not in the result")
+		// The text writes the day out: its words are in the text and carry
+		// the number of the day.
+		if !holds(text, evidence) {
+			return refuse("the evidence is not in the text")
 		}
 		if !hasNumber(evidence, day.Day()) {
 			return refuse("the evidence does not name the day")
 		}
+		// "mardi 23 juillet" is not a Saturday: the weekday the text
+		// names must be the day's.
+		if wd, named := weekdayIn(evidence); named && wd != day.Weekday() {
+			return refuse("the evidence names another weekday")
+		}
+		// A day written without its year ("le 26 septembre") is the last
+		// such day before the text was published, not one of the year the
+		// site knows: a text of 2021 that says "le 26 septembre" does not
+		// date a statement of 2020.
+		if !hasYear(evidence, day.Year()) {
+			if !hasPub {
+				return refuse("the evidence gives no year and the text no publication date")
+			}
+			if gap := pub.Sub(day.UTC()); gap < 0 || gap >= 365*24*time.Hour {
+				return refuse("the evidence gives no year and the text is of another year")
+			}
+		}
 	case "published":
-		// The result is of the statement's own days: published on the day
-		// or within the week after it.
-		pub, ok := parsePubDate(r.Date)
-		if !ok {
-			return refuse("the result has no publication date")
+		// The text is of the statement's own days: published on the day or
+		// within the week after it.
+		if !hasPub {
+			return refuse("no publication date")
 		}
 		if gap := pub.Sub(day.UTC()); gap < 0 || gap > publishedWithin {
-			return refuse("the result was not published in the days of the statement")
+			return refuse("not published in the days of the statement")
 		}
 		evidence = "published " + pub.Format("2006-01-02")
 	default:
 		return refuse("no way given")
 	}
-	out.Day, out.URL, out.Evidence = &day, r.URL, evidence
+	out.Day, out.Evidence, out.How = &day, evidence, how
 	return out
 }
 
@@ -298,6 +373,46 @@ func hasNumber(text string, n int) bool {
 		}
 	}
 	return false
+}
+
+// hasYear reports whether text holds the year as a number.
+func hasYear(text string, year int) bool {
+	for _, m := range numberRe.FindAllString(text, -1) {
+		if v, err := strconv.Atoi(m); err == nil && v == year {
+			return true
+		}
+	}
+	return false
+}
+
+var weekdays = map[string]time.Weekday{
+	"lundi": time.Monday, "mardi": time.Tuesday, "mercredi": time.Wednesday, "jeudi": time.Thursday,
+	"vendredi": time.Friday, "samedi": time.Saturday, "dimanche": time.Sunday,
+	"monday": time.Monday, "tuesday": time.Tuesday, "wednesday": time.Wednesday, "thursday": time.Thursday,
+	"friday": time.Friday, "saturday": time.Saturday, "sunday": time.Sunday,
+}
+
+// weekdayIn returns the weekday text names, when it names exactly one.
+func weekdayIn(text string) (time.Weekday, bool) {
+	var found time.Weekday
+	n := 0
+	for _, w := range wordRe.FindAllString(strings.ToLower(text), -1) {
+		if wd, ok := weekdays[w]; ok && (n == 0 || wd != found) {
+			found = wd
+			n++
+		}
+	}
+	return found, n == 1
+}
+
+// sameDay reports whether a and b are the same day, or a day apart (the
+// time zones of a page and of a search engine).
+func sameDay(a, b time.Time) bool {
+	d := a.UTC().Sub(b.UTC())
+	if d < 0 {
+		d = -d
+	}
+	return d < 36*time.Hour
 }
 
 var wordRe = regexp.MustCompile(`[\p{L}\p{N}]+`)

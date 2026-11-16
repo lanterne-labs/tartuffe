@@ -19,6 +19,7 @@ import (
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/objectstore"
 	"digital-mirror/backend/search"
+	"digital-mirror/backend/statementday"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/webfetch"
 
@@ -89,11 +90,36 @@ type Deps struct {
 	webSearcher      search.WebSearcher
 	imageSearcher    search.ImageSearcher
 	objectStore      objectstore.ObjectStore
+	statementDays    *statementday.Finder
 }
 
 // New returns a container bound to the given storer.
 func New(storer *storage.PostgresStorer) *Deps {
-	return &Deps{Storer: storer}
+	d := &Deps{Storer: storer}
+	// Every inserter of the process searches the exact day of a fact it
+	// stores with a year or a month (backend/statementday).
+	core.UseStatementDays(statementday.NewSharpener(storer, d.StatementDayFinder))
+	return d
+}
+
+// StatementDayFinder is the finder of the exact day of a statement dated to
+// a year or a month: the web search, the LLM and the pages read with the
+// content extractor.
+func (d *Deps) StatementDayFinder() (*statementday.Finder, error) {
+	pages, err := d.ContentExtractor()
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.statementDays == nil {
+		f, err := statementday.NewFinderFromEnv(statementday.ExtractorReader(pages))
+		if err != nil {
+			return nil, err
+		}
+		d.statementDays = f
+	}
+	return d.statementDays, nil
 }
 
 // FactExtractor is the LLM fact extractor.

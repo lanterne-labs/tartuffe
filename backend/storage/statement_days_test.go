@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"digital-mirror/backend"
+	"digital-mirror/backend/statementday"
 )
 
 // A fact dated to a year is listed for the search of its day; the day found
@@ -71,4 +72,26 @@ func TestStatementDaySearch(t *testing.T) {
 	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT statement_date::text, statement_date_precision FROM facts WHERE id = $1`, month).Scan(&date, &precision))
 	assert.Equal(t, "2022-03-01", date)
 	assert.Equal(t, "month", precision)
+
+	// The article that dated the statement is queued once for the news
+	// extraction of the person.
+	page := statementday.Page{URL: "https://example.org/the-report-of-2013", Title: "The report", Text: "the text of the report", Published: &day}
+	queued, err := storer.QueueArticle(ctx, personID, "day person", page)
+	require.NoError(t, err)
+	assert.True(t, queued)
+	queued, err = storer.QueueArticle(ctx, personID, "day person", page)
+	require.NoError(t, err)
+	assert.False(t, queued)
+	docs, err := storer.ListUnfinishedDocuments(ctx, "news", personID, time.Time{}, 10)
+	require.NoError(t, err)
+	require.Len(t, docs, 1)
+	assert.Equal(t, page.URL, docs[0].URL)
+	assert.Equal(t, "the text of the report", docs[0].Content)
+	list, err := storer.ListFactsForStatementDay(ctx, true, 10, true)
+	require.NoError(t, err)
+	for _, p := range list {
+		if p.FactID == month {
+			assert.Equal(t, personID, p.PersonID)
+		}
+	}
 }

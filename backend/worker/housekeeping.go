@@ -582,7 +582,7 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) (err er
 	}
 	// The exact day of the statements known to the year or the month, before
 	// the explanations: a new date writes the explanation again.
-	if err := step("statement days", h.statementDays(ctx)); err != nil {
+	if err := step("statement days", h.statementDays(ctx, statementDayLimit)); err != nil {
 		return err
 	}
 	// 7. The explanations the site shows with the contradictions.
@@ -668,17 +668,19 @@ func (h *Housekeeping) auditIfDue(ctx context.Context) error {
 }
 
 // statementDays searches the web for the exact day of the candidates'
-// statements dated to a year or a month, statementDayLimit at most, those
-// of a contradiction first.
-func (h *Housekeeping) statementDays(ctx context.Context) error {
-	finder, err := statementday.NewFinderFromEnv()
+// statements dated to a year or a month that the insertion left (stored
+// before the search existed, or while the search or the LLM was out), limit
+// at most, those of a contradiction first. The article that gives a day is queued for the news
+// extraction of the person.
+func (h *Housekeeping) statementDays(ctx context.Context, limit int) error {
+	finder, err := h.Deps.StatementDayFinder()
 	if err != nil {
 		return fmt.Errorf("statement day finder unavailable: %w", err)
 	}
-	res, err := statementday.Run(ctx, h.Storer, finder, statementday.Options{Limit: statementDayLimit, Apply: true})
+	res, err := statementday.Run(ctx, h.Storer, finder, statementday.Options{Limit: limit, Apply: true})
 	if res.Searched > 0 || res.Failed > 0 {
-		log.Info().Int("searched", res.Searched).Int("found", res.Found).Int("failed", res.Failed).
-			Msg("Maintenance: statement days searched")
+		log.Info().Int("searched", res.Searched).Int("found", res.Found).Int("queued", res.Queued).Int("failed", res.Failed).
+			Msg("Worker: statement days searched")
 	}
 	return err
 }
