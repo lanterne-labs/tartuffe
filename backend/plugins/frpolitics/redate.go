@@ -83,7 +83,7 @@ type RedateResult struct {
 	Rewritten  int // ballots whose text changes
 	Suffixed   int // ballots given the date suffix
 	Abstention int // ballots whose abstention wording was fixed
-	Renouned   int // ballots of a resolution that called it « le texte de loi »
+	Renouned   int // ballots of a resolution or an organic law that called it « le texte de loi »
 	Written    int // ballots written (0 in a dry run)
 	Examples   []RedateExample
 }

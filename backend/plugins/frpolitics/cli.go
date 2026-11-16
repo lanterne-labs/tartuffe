@@ -197,7 +197,7 @@ func runRedateMode(ctx context.Context, storer *storage.PostgresStorer, opts CLI
 	if opts.Apply {
 		mode = fmt.Sprintf("%d written", res.Written)
 	}
-	fmt.Printf("%d ballots read; %d to rewrite: %d given the date suffix, %d abstention wordings fixed, %d resolutions no longer called a law; %s\n",
+	fmt.Printf("%d ballots read; %d to rewrite: %d given the date suffix, %d abstention wordings fixed, %d given the noun of their text (a resolution, an organic law); %s\n",
 		res.Ballots, res.Rewritten, res.Suffixed, res.Abstention, res.Renouned, mode)
 	return nil
 }
