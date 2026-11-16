@@ -7,7 +7,6 @@
 	import '@fontsource/cormorant-garamond/500.css';
 	import '@fontsource/cormorant-garamond/600.css';
 	import '@fontsource/cormorant-garamond/700.css';
-	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { page } from '$app/stores';
 	import { fly } from 'svelte/transition';
@@ -64,7 +63,6 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
 	<link rel="canonical" href={$page.url.origin + $page.url.pathname} />
 	<meta name="description" content={meta.description} />
 	<meta property="og:site_name" content="tartuffe.me" />
@@ -76,6 +74,7 @@
 	<meta property="og:image" content={meta.image} />
 	<meta name="twitter:image" content={meta.image} />
 	<meta name="twitter:card" content="summary" />
+	<meta name="twitter:site" content="@lanternelabs" />
 	<meta name="twitter:title" content={meta.title} />
 	<meta name="twitter:description" content={meta.description} />
 </svelte:head>

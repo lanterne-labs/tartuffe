@@ -13,7 +13,6 @@
 	import '@fontsource/cormorant-garamond/500.css';
 	import '@fontsource/cormorant-garamond/600.css';
 	import '@fontsource/cormorant-garamond/700.css';
-	import favicon from '$lib/assets/favicon.svg';
 	import '$lib/../app.css';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
@@ -40,7 +39,6 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
 	<meta name="robots" content="noindex" />
 	<!-- No Referer: the sites the app loads from (the candidates' photos on
 	     Wikimedia, ZKPassport, the relays) are not told the page asking is the vote. -->

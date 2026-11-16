@@ -547,7 +547,10 @@
 </script>
 
 <svelte:head>
-	<title>{person?.name ?? tr('person.loading', currentLang)} — tartuffe.me</title>
+	<!-- Before the person is loaded (what a crawler or a link preview reads),
+	     the title is the one of the preview: the fact or the contradiction
+	     the link points at. -->
+	<title>{person?.name ?? ($page.data as { meta?: { title?: string } }).meta?.title ?? tr('person.loading', currentLang)} — tartuffe.me</title>
 </svelte:head>
 
 <!-- The call to the vote of a presidential candidate's page: to the vote's

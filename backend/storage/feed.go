@@ -447,8 +447,8 @@ type ShareTarget struct {
 	StanceID       *int64  `json:"stance_id,omitempty"`
 	StanceLabel    *string `json:"stance_label,omitempty"`
 	StanceLabelEn  *string `json:"stance_label_en,omitempty"`
-	// Text is the shared item: the stance summary, the fact, or the first
-	// fact of a contradiction; Other is its second fact.
+	// Text is the shared item: the stance summary, the fact, or the earlier
+	// fact of a contradiction; Other is its later fact.
 	Text   string  `json:"text"`
 	TextEn *string `json:"text_en,omitempty"`
 	Other  *string `json:"other,omitempty"`
@@ -490,18 +490,27 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 	case "contradiction":
 		var other string
 		var reason *string
+		var dateA, dateB *time.Time
 		err = s.pool.QueryRow(ctx, `
 			SELECT `+sharePersonColumns+`, sd.id, sd.cluster_label, sd.label_en,
 			       COALESCE(NULLIF(c.explanation, ''), c.reason), fa.fact_text, fb.fact_text,
+			       `+ShownDateSQL("fa", "sa.earliest")+`, `+ShownDateSQL("fb", "sb.earliest")+`,
 			       `+likesCount("contradiction", "c.id")+`
 			FROM contradictions c
 			JOIN persons p ON p.id = c.person_id
 			JOIN facts fa ON fa.id = c.fact_a_id
 			JOIN facts fb ON fb.id = c.fact_b_id
 			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
+			`+FactSidesLateral("fa", "sa")+`
+			`+FactSidesLateral("fb", "sb")+`
 			WHERE c.id = $1`, id).
 			Scan(&t.PersonID, &t.PersonSlug, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
-				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &reason, &t.Text, &other, &t.Likes)
+				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &reason, &t.Text, &other, &dateA, &dateB, &t.Likes)
+		// The earlier fact first, as the feed shows the pair: the preview
+		// reads "this, then that".
+		if dateA != nil && dateB != nil && dateB.Before(*dateA) {
+			t.Text, other = other, t.Text
+		}
 		t.Other = &other
 		if reason != nil && *reason != "" {
 			// The explanation (the judge's reason until it is written) says
