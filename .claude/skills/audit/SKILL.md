@@ -71,6 +71,7 @@ go build -o dm .
 - Read-only SQL: `psql "$DBURL" -X -At -F ' | ' -c "..."`.
 - Write SQL (approved cleanups only): `scripts/qw.py` of this skill.
 - Work in the session's scratchpad directory, in a folder `audit-<date>/`.
+- The scripts call the host's CLI as `host`; where it has another name, `export HOST_CLI=<its command>` (and run it from the checkout: a worktree is not linked to the project).
 
 ## What one run looks at: the new window and a slice of history
 
@@ -233,6 +234,11 @@ when the window is empty), and tag every row with where it came from:
 | stances | ~70 of the main persons, 3–40 facts | mixed subjects, strays, label, summary vs facts, duplicates, missed contradictions |
 | new entities | all non-human since the window | political, advocacy (kept), state organ, company, foreign state, foreign party, junk |
 
+Draw the fact samples with `scripts/samples.sql` (its header gives the
+variables). In a stance, a fact grouped as a duplicate
+(`fact_relations.relation_type = 'duplicate'`) is not shown on the site: leave
+them out of the dump, or half of the stances look full of repeats (2026-11-16).
+
 Report each sample as an error rate by type. A type above about 3 % is a
 pattern to fix in step 4; below, note it.
 
@@ -252,7 +258,11 @@ names them). Queries that paid off: an article that never names the person
 an agenda line stored as a position (« sera l'invité de », « a donné
 rendez-vous sur »); HTML entities left in a quote (`&#xE9;`); a fact text
 that dates a past event after its source (`published_at` of a live page is
-the day the page was created).
+the day the page was created); a fact on a video page whose address does not
+name the person (`/videos/` in the URL: the headline of another video, dated
+at the page's date); a fact text that gives the current year to a day and
+month of an article of an earlier year (« le 27 octobre 2026 » from an
+article of 2025: extracted before the article's date was the reference).
 
 ### Every wrong row gets its cause, written down
 
