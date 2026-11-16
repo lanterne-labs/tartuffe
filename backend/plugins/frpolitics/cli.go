@@ -50,7 +50,7 @@ var cliModes = []cliMode{
 	{"remotion", "name the motion in the stored ballots of the motion scrutins; reopens the pairs of the motions other than censure", runRemotionMode},
 	{"reamend", "complete the quoted object of the amendment ballots cut inside the guillemets (--dry-run to count)", runReamendMode},
 	{"reword", "give the stored amendment ballots what the amendment does (an LLM statement per amendment, cached) instead of the quoted exposé (--dry-run to count, --rejudge to reopen their pairs)", runRewordMode},
-	{"redate", "give the stored ballots the scrutin date suffix and the current abstention wording, no LLM (dry run unless --apply)", runRedateMode},
+	{"redate", "give the stored ballots the scrutin date suffix, the current abstention wording and the noun of a resolution, no LLM (dry run unless --apply)", runRedateMode},
 	{"resummarize", "give the amendment ballots whose bill summary describes the amendment the bill's summary (--dry-run to count, --rejudge to reopen their pairs)", runResummarizeMode},
 }
 
@@ -197,8 +197,8 @@ func runRedateMode(ctx context.Context, storer *storage.PostgresStorer, opts CLI
 	if opts.Apply {
 		mode = fmt.Sprintf("%d written", res.Written)
 	}
-	fmt.Printf("%d ballots read; %d to rewrite: %d given the date suffix, %d abstention wordings fixed; %s\n",
-		res.Ballots, res.Rewritten, res.Suffixed, res.Abstention, mode)
+	fmt.Printf("%d ballots read; %d to rewrite: %d given the date suffix, %d abstention wordings fixed, %d given the noun of their text (a resolution, an organic law); %s\n",
+		res.Ballots, res.Rewritten, res.Suffixed, res.Abstention, res.Renouned, mode)
 	return nil
 }
 

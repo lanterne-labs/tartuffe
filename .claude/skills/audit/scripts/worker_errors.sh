@@ -4,8 +4,10 @@
 # The log command returns the last N lines of ONE deployment: a burst (every
 # seat at its limit logs 2 000 lines in 3 minutes) hides the rest, so the seat
 # noise is filtered out on the server and every deployment of the window is read.
+# HOST_CLI names the host's command line when it is not installed as `host`.
 set -eu
 svc="$1"; out="$2"; n="${3:-5000}"
+host() { command "${HOST_CLI:-host}" "$@"; }
 mkdir -p "$out"
 host deployment list --service "$svc" | awk '/SUCCESS|REMOVED/ {print $1}' | head -6 > "$out/deployments.txt"
 : > "$out/worker_errors.log"

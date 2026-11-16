@@ -21,6 +21,40 @@ import (
 // 2026-10-31: individual and collective, with or without the feminine.
 var oldAbstention = regexp.MustCompile(`\bs'est (collectivement )?abstenue? (lors du vote sur|sur) `)
 
+// renounBallotText names the text of a stored ballot as textNoun does for the
+// scrutin title: the ballots stored before textNoun (2026-10-31) call a
+// proposition de résolution « le texte de loi » (audit of 2026-11-16: 2 462
+// ballots of 15 scrutins, 4 of 50 audited in the band). The three forms the
+// builders write: the text alone (« a voté POUR le texte de loi : « … » »),
+// an article (« l'article unique du texte de loi : « … » ») and an amendment
+// (« …, déposé sur le texte de loi : « … » »). A declaration of the
+// Government is worded by lawPhraseFor from its summary and is left alone.
+func renounBallotText(text, title string) string {
+	noun := textNoun(title)
+	if noun == "le texte de loi" || noun == "la déclaration du Gouvernement" {
+		return text
+	}
+	// The noun is what precedes the bill's quote, the first " : «" of the
+	// ballot: a later « le texte de loi » belongs to a summary.
+	i := strings.Index(text, " : «")
+	if i < 0 {
+		return text
+	}
+	head, tail := text[:i], text[i:]
+	if rest, ok := strings.CutSuffix(head, " du texte de loi"); ok {
+		// votedObjectPhrase: " du " + the noun without its article « le »,
+		// " de " + the noun otherwise.
+		if n, ok := strings.CutPrefix(noun, "le "); ok {
+			return rest + " du " + n + tail
+		}
+		return rest + " de " + noun + tail
+	}
+	if rest, ok := strings.CutSuffix(head, " le texte de loi"); ok {
+		return rest + " " + noun + tail
+	}
+	return text
+}
+
 // redateBallotText is the stored ballot text as the current code would write
 // it for a scrutin voted on voteDate: the abstention worded as
 // buildVoteStatement / buildCollectiveVoteStatement do, then the date suffix
@@ -49,6 +83,7 @@ type RedateResult struct {
 	Rewritten  int // ballots whose text changes
 	Suffixed   int // ballots given the date suffix
 	Abstention int // ballots whose abstention wording was fixed
+	Renouned   int // ballots of a resolution or an organic law that called it « le texte de loi »
 	Written    int // ballots written (0 in a dry run)
 	Examples   []RedateExample
 }
@@ -62,7 +97,7 @@ type RedateExample struct {
 const redateBatch = 1000
 
 // RedateBallots rewrites every stored ballot (assemblee_law_page fact) whose
-// text differs from what redateBallotText makes of it, in batches of
+// text differs from what renounBallotText and redateBallotText make of it, in batches of
 // redateBatch rows, one transaction per batch. With dryRun nothing is
 // written: it counts and keeps 10 examples. A rewritten ballot loses its
 // English text (fact_text_en), as the other ballot repairs do; its embedding
@@ -75,7 +110,7 @@ func RedateBallots(ctx context.Context, store *Store, dryRun bool) (RedateResult
 			return res, err
 		}
 		rows, err := store.pool.Query(ctx, `
-			SELECT f.id, f.fact_text, MIN(fs.published_at)
+			SELECT f.id, f.fact_text, MIN(fs.published_at), COALESCE(MIN(fs.metadata->>'law_title'), '')
 			FROM facts f JOIN fact_sources fs ON fs.fact_id = f.id
 			WHERE fs.source_type = 'assemblee_law_page' AND f.id > $1 AND fs.published_at IS NOT NULL
 			GROUP BY f.id, f.fact_text
@@ -89,9 +124,9 @@ func RedateBallots(ctx context.Context, store *Store, dryRun bool) (RedateResult
 		n := 0
 		for rows.Next() {
 			var id int64
-			var text string
+			var text, title string
 			var at time.Time
-			if err := rows.Scan(&id, &text, &at); err != nil {
+			if err := rows.Scan(&id, &text, &at, &title); err != nil {
 				rows.Close()
 				return res, fmt.Errorf("scanning a ballot: %w", err)
 			}
@@ -99,11 +134,15 @@ func RedateBallots(ctx context.Context, store *Store, dryRun bool) (RedateResult
 			after = id
 			// The scrutin date is stored at midnight UTC (ParseScrutin reads a
 			// date-only dateScrutin as UTC), as frenchDate reads it.
-			fresh := redateBallotText(text, at.UTC())
+			renouned := renounBallotText(text, title)
+			fresh := redateBallotText(renouned, at.UTC())
 			if fresh == text {
 				continue
 			}
 			res.Rewritten++
+			if renouned != text {
+				res.Renouned++
+			}
 			if oldAbstention.MatchString(text) {
 				res.Abstention++
 			}
