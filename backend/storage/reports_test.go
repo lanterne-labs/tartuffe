@@ -358,6 +358,16 @@ func TestShareTargetAndScore(t *testing.T) {
 	assert.Equal(t, "Il faut la retraite à 60 ans.", c.Text)
 	assert.Equal(t, "Il faut la retraite à 65 ans.", *c.Other)
 
+	// The earlier statement first, whichever side of the pair it is.
+	_, err = storer.pool.Exec(ctx, `UPDATE facts SET statement_date = '2001-01-01', statement_date_precision = 'year' WHERE id = $1`, f.facts[1])
+	require.NoError(t, err)
+	c, err = storer.GetShareTarget(ctx, "contradiction", f.contradiction, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "Il faut la retraite à 65 ans.", c.Text, "the earlier fact first")
+	assert.Equal(t, "Il faut la retraite à 60 ans.", *c.Other)
+	_, err = storer.pool.Exec(ctx, `UPDATE facts SET statement_date = NULL, statement_date_precision = NULL WHERE id = $1`, f.facts[1])
+	require.NoError(t, err)
+
 	fa, err := storer.GetShareTarget(ctx, "fact", f.facts[2], f.person+1)
 	require.NoError(t, err, "a fact shared from another page opens its own person")
 	assert.Equal(t, f.person, fa.PersonID)

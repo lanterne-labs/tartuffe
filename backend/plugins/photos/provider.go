@@ -31,6 +31,7 @@ const (
 // Storer is the interface for database operations needed by the provider.
 type Storer interface {
 	SetPersonImageURL(ctx context.Context, personID int64, url string) error
+	SetPersonPreviewURL(ctx context.Context, personID int64, url string) error
 }
 
 // Provider orchestrates image search, download, upload, and storage.
@@ -203,6 +204,12 @@ func (p *Provider) store(ctx context.Context, person storage.PersonSummary, key 
 
 	if err := p.Storer.SetPersonImageURL(ctx, person.ID, publicURL); err != nil {
 		return fmt.Errorf("failed to store image URL: %w", err)
+	}
+	// The small copy for the link previews. A photo it cannot be made of
+	// (a format the decoder does not read) keeps the photo as its preview;
+	// `dm plugin photos previews` tries again.
+	if _, err := p.storePreview(ctx, person, data); err != nil {
+		log.Warn().Err(err).Str("person", person.Name).Msg("no preview made of the photo: the link previews show the photo itself")
 	}
 	return nil
 }

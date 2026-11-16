@@ -3,7 +3,13 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="theme-color" content="#0a0a0f" />
+		<meta name="theme-color" content="#100c12" />
+		<!-- Files, not an inlined image: the link previews (Slack, Discord,
+		     iMessage) and the crawlers fetch the icon by its address.
+		     scripts/icons.mjs draws them from the mark. -->
+		<link rel="icon" href="%sveltekit.assets%/favicon-48.png" type="image/png" sizes="48x48" />
+		<link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

@@ -37,6 +37,8 @@ go build -o dm .                                # Build binary
 ./dm facts statement-days --apply               # Find on the web the exact day of the statements dated to a year or a month ("2013" becomes "8 avril 2013")
                                                 # and queue the article that gives it for extraction; new facts are searched at insertion;
                                                 # --again searches again the facts an earlier run found no day for
+./dm plugin photos previews                     # Make the small copy (256 px) of the photos that have none: the image of the link previews
+                                                # (`persons.image_preview_url`; a new photo gets its copy when it is stored)
 ```
 
 ### Collection tasks and the worker

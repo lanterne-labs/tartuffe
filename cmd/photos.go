@@ -30,6 +30,16 @@ var photosSearchCmd = &cobra.Command{
 	RunE:        runPhotosSearch,
 }
 
+// photosPreviewsCmd makes the small copies the link previews show.
+var photosPreviewsCmd = &cobra.Command{
+	Use:   "previews",
+	Short: "Make the small copy of the photos that have none",
+	Long: `The link preview of a person, a fact or a contradiction shows a small copy of the person's photo (256 px): the messaging apps drop an image that is too heavy.
+A new photo gets its copy when it is stored; this makes the copy of the photos stored before, and of those whose copy failed.`,
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE:        runPhotosPreviews,
+}
+
 // photosSetCmd makes a given image the photo of a person.
 var photosSetCmd = &cobra.Command{
 	Use:   "set [name] [image-url]",
@@ -43,7 +53,7 @@ For a photo the search chose badly: pick one by hand (dm plugin photos search --
 
 func init() {
 	pluginCmd.AddCommand(photosCmd)
-	photosCmd.AddCommand(photosSearchCmd, photosSetCmd)
+	photosCmd.AddCommand(photosSearchCmd, photosSetCmd, photosPreviewsCmd)
 
 	photosSearchCmd.Flags().StringSlice("targets", nil, "specific persons/parties by name (comma-separated)")
 	photosSearchCmd.Flags().Bool("all", false, "process all persons without photos")
@@ -176,5 +186,37 @@ func runPhotosSet(cmd *cobra.Command, args []string) error {
 		return result.Error
 	}
 	fmt.Printf("%s (ID: %d): photo set, %s\n", person.Name, person.ID, result.ImageURL)
+	return nil
+}
+
+func runPhotosPreviews(cmd *cobra.Command, args []string) error {
+	_ = godotenv.Load()
+	ctx := context.Background()
+
+	storer, err := deps.OpenStorer(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer storer.Close()
+
+	photoStore := photos.NewStore(storer)
+	todo, err := photoStore.PhotosWithoutPreview(ctx)
+	if err != nil {
+		return err
+	}
+	if len(todo) == 0 {
+		fmt.Println("Every photo has its preview.")
+		return nil
+	}
+	objects, err := deps.New(storer).ObjectStore()
+	if err != nil {
+		return fmt.Errorf("object store: %w", err)
+	}
+	provider := &photos.Provider{R2: objects, Storer: photoStore}
+	made, failed := provider.BackfillPreviews(ctx, todo)
+	fmt.Printf("%d previews made, %d failed, of %d photos without one\n", made, failed, len(todo))
+	if failed > 0 {
+		return fmt.Errorf("%d photos have no preview (see the log)", failed)
+	}
 	return nil
 }

@@ -22,6 +22,21 @@ function isPerson(t: ShareTarget, ref: string): boolean {
 	return t.person_slug === ref || String(t.person_id) === ref;
 }
 
+// named puts the person's name before a fact that does not carry it: the
+// title of a preview is read alone, far from the page.
+function named(text: string, name: string): string {
+	return text.toLowerCase().includes(name.toLowerCase()) ? text : `${name} : ${text}`;
+}
+
+// quoted puts a source quote between guillemets, once.
+function quoted(q: string): string {
+	return `« ${q.replace(/^[«"“\s]+|[»"”\s]+$/g, '')} »`;
+}
+
+// describe writes the preview of the link. A messaging app or X shows the
+// title in full and little or nothing of the description, so the title of a
+// fact or a contradiction is the fact itself, never its topic: the reader
+// sees what was said before opening the link.
 function describe(target: ShareTarget): { title: string; description: string } {
 	const t = { ...target, person_name: displayName(target.person_name) };
 	const counts = `${t.contradiction_count} contradiction${t.contradiction_count === 1 ? '' : 's'} sur ${t.fact_count} fait${t.fact_count === 1 ? '' : 's'}`;
@@ -31,12 +46,15 @@ function describe(target: ShareTarget): { title: string; description: string } {
 		case 'stance':
 			return { title: `${t.person_name} — ${t.stance_label ?? ''}`, description: clip(t.text || `Ce que ${t.person_name} dit et vote.`, 200) };
 		case 'contradiction':
+			// The earlier fact, then the later one and why they conflict.
 			return {
-				title: `${t.person_name} se contredit${t.stance_label ? ` : ${t.stance_label}` : ''}`,
-				description: clip(`« ${clip(t.text, 110)} » puis « ${clip(t.other ?? '', 110)} »${t.quote ? ` — ${t.quote}` : ''}`, 280) + likes
+				title: `Contradiction : ${clip(named(t.text, t.person_name), 160)}`,
+				description: clip(`Puis : ${clip(t.other ?? '', 150)}${t.quote ? ` — ${t.quote}` : ''}`, 300) + likes
 			};
-		case 'fact':
-			return { title: `${t.person_name}${t.stance_label ? ` — ${t.stance_label}` : ''}`, description: clip(t.quote || t.text, 240) + likes };
+		case 'fact': {
+			const rest = [t.quote ? quoted(clip(t.quote, 200)) : '', t.stance_label ?? ''].filter(Boolean).join(' — ');
+			return { title: clip(named(t.text, t.person_name), 180), description: (rest || `${counts}, avec leurs sources, sur tartuffe.me.`) + likes };
+		}
 		default:
 			return { title: `Le Tartuffe-Score de ${t.person_name}`, description: `${counts}, avec leurs sources, sur tartuffe.me.` };
 	}
@@ -54,5 +72,5 @@ export const load: PageServerLoad = async ({ params, url, fetch, setHeaders }) =
 	// One address per person: a link by id goes to the page by slug, for good.
 	if (t.person_slug && ref !== t.person_slug) redirect(301, personPath(t.person_slug) + url.search);
 	setHeaders({ 'cache-control': 'public, max-age=300' });
-	return { meta: { ...describe(t), image: t.image_url ?? undefined } };
+	return { meta: { ...describe(t), image: t.preview_image_url ?? t.image_url ?? undefined } };
 };

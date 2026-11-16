@@ -241,7 +241,7 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 	//     are left untouched to avoid clobbering the survivor's curated organeRef/
 	//     assemblee_id.)
 	if _, err := tx.Exec(ctx, `
-		UPDATE persons p SET image_url = d.image_url
+		UPDATE persons p SET image_url = d.image_url, image_preview_url = d.image_preview_url
 		FROM persons d
 		WHERE p.id=$2 AND d.id=$1
 		  AND (p.image_url IS NULL OR p.image_url='')
