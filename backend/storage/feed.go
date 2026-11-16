@@ -134,9 +134,9 @@ type FeedCursor struct {
 	ID   int64
 }
 
-// factSidesLateral reads the sources of fact alias f into the columns
+// FactSidesLateral reads the sources of fact alias f into the columns
 // <p>urls, <p>quote and <p>earliest.
-func factSidesLateral(f, p string) string {
+func FactSidesLateral(f, p string) string {
 	return fmt.Sprintf(`LEFT JOIN LATERAL (
 			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
 			       (array_agg(COALESCE(original_quote, '') ORDER BY published_at ASC NULLS LAST))[1] AS quote,
@@ -330,15 +330,15 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		         WHERE c2.person_id = c.person_id AND c2.bundle_stance_id = c.bundle_stance_id) END,
 		       sd.id, sd.cluster_label, sd.label_en,
 		       c.reason, c.reason_en, NULLIF(c.explanation, ''), NULLIF(c.explanation_en, ''),
-		       fa.id, fa.fact_text, fa.fact_text_en, `+shownDateSQL("fa", "sa.earliest")+`, fa.statement_date_precision, COALESCE(sa.urls, '{}'), COALESCE(sa.quote, ''),
-		       fb.id, fb.fact_text, fb.fact_text_en, `+shownDateSQL("fb", "sb.earliest")+`, fb.statement_date_precision, COALESCE(sb.urls, '{}'), COALESCE(sb.quote, '')
+		       fa.id, fa.fact_text, fa.fact_text_en, `+ShownDateSQL("fa", "sa.earliest")+`, fa.statement_date_precision, COALESCE(sa.urls, '{}'), COALESCE(sa.quote, ''),
+		       fb.id, fb.fact_text, fb.fact_text_en, `+ShownDateSQL("fb", "sb.earliest")+`, fb.statement_date_precision, COALESCE(sb.urls, '{}'), COALESCE(sb.quote, '')
 		FROM contradictions c
 		JOIN persons p ON p.id = c.person_id
 		JOIN facts fa ON fa.id = c.fact_a_id
 		JOIN facts fb ON fb.id = c.fact_b_id
 		LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
-		`+factSidesLateral("fa", "sa")+`
-		`+factSidesLateral("fb", "sb")+`
+		`+FactSidesLateral("fa", "sa")+`
+		`+FactSidesLateral("fb", "sb")+`
 		`+likesLateral(FeedContradiction, "c")+`
 		WHERE c.detected_at IS NOT NULL AND p.fact_count >= $5
 		  AND ($10::timestamptz IS NULL OR c.detected_at >= $10)
@@ -384,7 +384,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 		SELECT f.id, f.created_at, p.id, p.slug, p.name, p.image_url, p.honesty_score, p.fact_count,
 		       lk.n::int, lk.mine, `+hotRank("f.created_at")+` AS rank,
 		       sd.id, sd.cluster_label, sd.label_en,
-		       f.fact_text, f.fact_text_en, `+shownDateSQL("f", "sf.earliest")+`, f.statement_date_precision, COALESCE(sf.urls, '{}'), COALESCE(sf.quote, '')
+		       f.fact_text, f.fact_text_en, `+ShownDateSQL("f", "sf.earliest")+`, f.statement_date_precision, COALESCE(sf.urls, '{}'), COALESCE(sf.quote, '')
 		FROM facts f
 		JOIN LATERAL (
 			SELECT sd.id, sd.cluster_label, sd.label_en, sd.person_id
@@ -394,7 +394,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 			ORDER BY sdf.added_at LIMIT 1
 		) sd ON true
 		JOIN persons p ON p.id = sd.person_id
-		`+factSidesLateral("f", "sf")+`
+		`+FactSidesLateral("f", "sf")+`
 		`+likesLateral(FeedFact, "f")+`
 		WHERE f.created_at IS NOT NULL AND p.fact_count >= $5
 		  AND ($10::timestamptz IS NULL OR f.created_at >= $10)

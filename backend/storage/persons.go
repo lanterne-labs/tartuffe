@@ -506,7 +506,7 @@ func (s *PostgresStorer) fillLastContradictions(ctx context.Context, persons []*
 		SELECT DISTINCT ON (d.person_id) d.person_id, d.at, d.precision
 		FROM (
 			SELECT c.person_id,
-			       `+shownDateSQL("f", "(SELECT MIN(published_at) FROM fact_sources WHERE fact_id = f.id)")+` AS at,
+			       `+ShownDateSQL("f", "(SELECT MIN(published_at) FROM fact_sources WHERE fact_id = f.id)")+` AS at,
 			       CASE WHEN f.statement_date IS NOT NULL THEN f.statement_date_precision END AS precision
 			FROM contradictions c
 			JOIN facts f ON f.id IN (c.fact_a_id, c.fact_b_id)

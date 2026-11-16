@@ -18,15 +18,14 @@ type DigestStore struct{ s *PostgresStorer }
 func NewDigestStore(s *PostgresStorer) *DigestStore { return &DigestStore{s: s} }
 
 // DigestCounts counts the facts stored, the contradictions detected, and the
-// collection tasks and tweets that failed since a time.
+// collection tasks that failed since a time.
 func (d *DigestStore) DigestCounts(ctx context.Context, since time.Time) (digest.Counts, error) {
 	var c digest.Counts
 	err := d.s.pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM facts WHERE created_at >= $1),
 		(SELECT count(*) FROM contradictions WHERE detected_at >= $1),
-		(SELECT count(*) FROM collection_tasks WHERE status = 'failed' AND finished_at >= $1),
-		(SELECT count(*) FROM x_posts WHERE status = 'failed' AND created_at >= $1)`, since).
-		Scan(&c.Facts, &c.Contradictions, &c.FailedTasks, &c.FailedPosts)
+		(SELECT count(*) FROM collection_tasks WHERE status = 'failed' AND finished_at >= $1)`, since).
+		Scan(&c.Facts, &c.Contradictions, &c.FailedTasks)
 	if err != nil {
 		return c, fmt.Errorf("digest counts: %w", err)
 	}
