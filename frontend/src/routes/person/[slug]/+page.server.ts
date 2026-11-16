@@ -72,5 +72,5 @@ export const load: PageServerLoad = async ({ params, url, fetch, setHeaders }) =
 	// One address per person: a link by id goes to the page by slug, for good.
 	if (t.person_slug && ref !== t.person_slug) redirect(301, personPath(t.person_slug) + url.search);
 	setHeaders({ 'cache-control': 'public, max-age=300' });
-	return { meta: { ...describe(t), image: t.image_url ?? undefined } };
+	return { meta: { ...describe(t), image: t.preview_image_url ?? t.image_url ?? undefined } };
 };

@@ -345,6 +345,8 @@ export interface ShareTarget {
 	person_slug: string;
 	person_name: string;
 	image_url?: string | null;
+	// The small copy of the photo, for the link preview.
+	preview_image_url?: string | null;
 	honesty_score: number;
 	fact_count: number;
 	contradiction_count: number;

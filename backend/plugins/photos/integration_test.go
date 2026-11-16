@@ -33,11 +33,17 @@ func (m *mockImageSearcher) SearchImages(query string, opts search.ImageSearchOp
 
 // mockStorer records SetPersonImageURL calls.
 type mockStorer struct {
-	imageURLs map[int64]string
+	imageURLs   map[int64]string
+	previewURLs map[int64]string
 }
 
 func newMockStorer() *mockStorer {
-	return &mockStorer{imageURLs: make(map[int64]string)}
+	return &mockStorer{imageURLs: make(map[int64]string), previewURLs: make(map[int64]string)}
+}
+
+func (m *mockStorer) SetPersonPreviewURL(_ context.Context, personID int64, url string) error {
+	m.previewURLs[personID] = url
+	return nil
 }
 
 func (m *mockStorer) SetPersonImageURL(_ context.Context, personID int64, url string) error {
