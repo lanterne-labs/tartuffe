@@ -285,6 +285,7 @@ func (s *SerperProvider) SearchWeb(query string, limit int) ([]SearchResult, err
 			URL:     item.Link,
 			Title:   item.Title,
 			Snippet: item.Snippet,
+			Date:    item.Date,
 		})
 	}
 

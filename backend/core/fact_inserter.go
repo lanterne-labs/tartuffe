@@ -325,6 +325,7 @@ func (fi *FactInserter) insertOne(ctx context.Context, i, n int, fact StoreFactI
 	}
 	factID, personID, err := fi.insertSingleFact(ctx, fact)
 	if err == nil {
+		fi.findStatementDay(ctx, factID, personID, fact)
 		return factOutcome{meta: &InsertedFactMeta{FactID: factID, PersonID: personID}}, nil
 	}
 	// Entity-validator rejection means the subject isn't a real entity —

@@ -12,7 +12,7 @@
 	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, whyOf, type Lang } from '$lib/i18n';
 	import { sourceDomain } from '$lib/sources';
-	import { factYear } from '$lib/dates';
+	import { factDateText } from '$lib/dates';
 	import { personPath, sharePath } from '$lib/share';
 	import { realtimeManager, subscribeToPersonEvents } from '$lib/realtime';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
@@ -437,10 +437,10 @@
 							{#if whyOf(it, currentLang)}
 								<p class="why">{whyOf(it, currentLang)}</p>
 							{/if}
-							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
-							<p class="line line-b"><span class="yr">{factYear(it.other.date, it.other.date_precision)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
+							<p class="line"><span class="yr">{factDateText(it.fact.date, it.fact.date_precision, currentLang)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
+							<p class="line line-b"><span class="yr">{factDateText(it.other.date, it.other.date_precision, currentLang)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
 						{:else}
-							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
+							<p class="line"><span class="yr">{factDateText(it.fact.date, it.fact.date_precision, currentLang)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
 						{/if}
 					</a>
 
