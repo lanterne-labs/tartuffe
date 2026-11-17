@@ -293,10 +293,10 @@ func TestParseSerperDate(t *testing.T) {
 		{"2 days ago", "2 days ago", now.AddDate(0, 0, -2), true},
 		{"1 day ago", "1 day ago", now.AddDate(0, 0, -1), true},
 		{"an hour ago", "an hour ago", now.Add(-time.Hour), true},
-		{"a week ago", "a week ago", now.AddDate(0, 0, -7), true},
-		{"3 weeks ago", "3 weeks ago", now.AddDate(0, 0, -21), true},
-		{"1 month ago", "1 month ago", now.AddDate(0, -1, 0), true},
-		{"one year ago", "one year ago", now.AddDate(-1, 0, 0), true},
+		{"a week ago names no day", "a week ago", time.Time{}, false},
+		{"3 weeks ago names no day", "3 weeks ago", time.Time{}, false},
+		{"1 month ago names no day", "1 month ago", time.Time{}, false},
+		{"one year ago names no day", "one year ago", time.Time{}, false},
 		{"YESTERDAY upper", "YESTERDAY", now.AddDate(0, 0, -1), true},
 
 		// French relative
@@ -306,10 +306,10 @@ func TestParseSerperDate(t *testing.T) {
 		{"il y a 2 jours", "il y a 2 jours", now.AddDate(0, 0, -2), true},
 		{"il y a 1 jour", "il y a 1 jour", now.AddDate(0, 0, -1), true},
 		{"il y a une heure", "il y a une heure", now.Add(-time.Hour), true},
-		{"il y a 3 semaines", "il y a 3 semaines", now.AddDate(0, 0, -21), true},
-		{"il y a 1 mois", "il y a 1 mois", now.AddDate(0, -1, 0), true},
-		{"il y a une année", "il y a une année", now.AddDate(-1, 0, 0), true},
-		{"il y a un an", "il y a un an", now.AddDate(-1, 0, 0), true},
+		{"il y a 3 semaines names no day", "il y a 3 semaines", time.Time{}, false},
+		{"il y a 1 mois names no day", "il y a 1 mois", time.Time{}, false},
+		{"il y a une année names no day", "il y a une année", time.Time{}, false},
+		{"il y a un an names no day", "il y a un an", time.Time{}, false},
 
 		// Garbage / unparseable
 		{"empty", "", time.Time{}, false},

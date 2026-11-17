@@ -1539,6 +1539,7 @@ type FactSourceRow struct {
 	SourceURL     string
 	OriginalQuote string
 	PublishedAt   *time.Time
+	ScrapedAt     time.Time // when the source was stored
 	Metadata      map[string]any
 }
 
@@ -1546,7 +1547,7 @@ type FactSourceRow struct {
 // type with an id above afterID, by id.
 func (s *PostgresStorer) ListFactSourcesByType(ctx context.Context, sourceType string, afterID int64, limit int) ([]FactSourceRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, fact_id, source_url, COALESCE(original_quote, ''), published_at, COALESCE(metadata, '{}')
+		SELECT id, fact_id, source_url, COALESCE(original_quote, ''), published_at, scraped_at, COALESCE(metadata, '{}')
 		FROM fact_sources
 		WHERE source_type = $1 AND id > $2
 		ORDER BY id
@@ -1559,7 +1560,7 @@ func (s *PostgresStorer) ListFactSourcesByType(ctx context.Context, sourceType s
 	for rows.Next() {
 		var r FactSourceRow
 		var meta []byte
-		if err := rows.Scan(&r.ID, &r.FactID, &r.SourceURL, &r.OriginalQuote, &r.PublishedAt, &meta); err != nil {
+		if err := rows.Scan(&r.ID, &r.FactID, &r.SourceURL, &r.OriginalQuote, &r.PublishedAt, &r.ScrapedAt, &meta); err != nil {
 			return nil, fmt.Errorf("scanning fact source: %w", err)
 		}
 		if len(meta) > 0 {
