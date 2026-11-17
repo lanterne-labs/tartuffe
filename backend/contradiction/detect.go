@@ -7,6 +7,7 @@ import (
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/pairfilter"
 	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
 	"errors"
@@ -45,7 +46,10 @@ type DetectOptions struct {
 
 // DetectResult is what a detection run judged and found.
 type DetectResult struct {
+	// PairsChecked counts every pair that got a verdict, PairsCleared those of
+	// them the pair filter cleared without the judge.
 	PairsChecked   int
+	PairsCleared   int
 	Contradictions int
 	// Cut is set when MaxPairs stopped the collection before the last person.
 	Cut bool
@@ -655,8 +659,16 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 		groupJudge = adj
 	}
 
+	// The pair filter clears the pairs that plainly do not conflict before
+	// the judge reads the rest (PAIR_FILTER_URL; without it, no filter).
+	filter, err := pairfilter.FromEnv()
+	if err != nil {
+		return DetectResult{}, fmt.Errorf("pair filter: %w", err)
+	}
+
 	totalContradictions := 0
 	totalPairsChecked := 0
+	totalPairsCleared := 0
 	// stopped is set when the LLM went away, when ctx was cancelled, or when
 	// the grouping data of a person failed to load (a DB error): the run
 	// stops there and every pair not yet recorded stays pending for the next
@@ -678,22 +690,37 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 			}
 		}
 		personContradictions := 0
+		pairs, cleared := screenPairs(ctx, filter, pp.pairs)
+		if len(cleared) > 0 {
+			totalPairsChecked += len(cleared)
+			totalPairsCleared += len(cleared)
+			log.Info().Str("person", pp.personName).Int("cleared", len(cleared)).Int("to_judge", len(pairs)).Str("filter", filter.Name()).Msg("detection: pairs cleared by the pair filter")
+			if !opts.DryRun {
+				checks := make([]storage.PairCheckResult, len(cleared))
+				for j, p := range cleared {
+					checks[j] = storage.PairCheckResult{FactAID: p.factAID, FactBID: p.factBID}
+				}
+				if err := storer.RecordPairChecksBatch(context.WithoutCancel(ctx), pp.personID, JudgeRulebookHash(), checks); err != nil {
+					log.Error().Err(err).Str("person", pp.personName).Msg("Failed to record the pairs cleared by the pair filter")
+				}
+			}
+		}
 		// The verdicts of up to llm.Concurrency() calls are asked at once;
 		// what follows them (verification, recording, grouping) runs in
 		// pair order. Locally one call at a time, of one pair.
 		perCall := llm.PerCall(llm.TaskDetect, PairsPerCall)
 		step := perCall * llm.Concurrency()
 
-		for i := 0; i < len(pp.pairs); i += step {
+		for i := 0; i < len(pairs); i += step {
 			if err := ctx.Err(); err != nil {
 				stopped = err
 				break
 			}
 			end := i + step
-			if end > len(pp.pairs) {
-				end = len(pp.pairs)
+			if end > len(pairs) {
+				end = len(pairs)
 			}
-			batch := pp.pairs[i:end]
+			batch := pairs[i:end]
 
 			results := judgeConcurrently(ctx, detector, batch, perCall)
 			totalPairsChecked += len(batch)
@@ -784,9 +811,9 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 				break
 			}
 
-			log.Debug().Int("batch_start", i).Int("batch_end", end).Int("total_pairs", len(pp.pairs)).Str("person", pp.personName).Msg("Batch processed")
+			log.Debug().Int("batch_start", i).Int("batch_end", end).Int("total_pairs", len(pairs)).Str("person", pp.personName).Msg("Batch processed")
 
-			if end < len(pp.pairs) {
+			if end < len(pairs) {
 				time.Sleep(DelayBetweenBatches)
 			}
 		}
@@ -802,6 +829,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 	if !opts.DryRun {
 		jobMetrics := []storage.JobMetric{
 			{JobType: "contradictions-detect", Target: "", Metric: "pairs_checked", Value: float64(totalPairsChecked)},
+			{JobType: "contradictions-detect", Target: "", Metric: "pairs_filtered", Value: float64(totalPairsCleared)},
 			{JobType: "contradictions-detect", Target: "", Metric: "contradictions_found", Value: float64(totalContradictions)},
 		}
 		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
@@ -809,7 +837,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 		}
 	}
 
-	res := DetectResult{PairsChecked: totalPairsChecked, Contradictions: totalContradictions}
+	res := DetectResult{PairsChecked: totalPairsChecked, PairsCleared: totalPairsCleared, Contradictions: totalContradictions}
 	if stopped != nil {
 		return res, fmt.Errorf("contradiction detection stopped: %w", stopped)
 	}

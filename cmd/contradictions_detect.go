@@ -107,6 +107,9 @@ func executeContradictionDetection(ctx context.Context, storer *storage.Postgres
 		return nil
 	}
 	fmt.Printf("Total pairs checked: %d\n", res.PairsChecked)
+	if res.PairsCleared > 0 {
+		fmt.Printf("  of which cleared by the pair filter, without the judge: %d\n", res.PairsCleared)
+	}
 	fmt.Printf("Total contradictions found: %d\n", res.Contradictions)
 	if opts.DryRun {
 		fmt.Printf("(Dry run - nothing recorded to database)\n")
