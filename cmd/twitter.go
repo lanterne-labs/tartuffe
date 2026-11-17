@@ -476,8 +476,8 @@ func runTwitterRedate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Printf("tweets: %d read, %d fetched again, %d no longer available\n", rep.Tweets, rep.TweetsFetched, rep.TweetsMissing)
-	fmt.Printf("fact sources: %d read, %d matched to their tweet (%d with another date), %d unmatched\n",
-		rep.Sources, rep.Matched, rep.DateChanged, len(rep.Unmatched))
+	fmt.Printf("fact sources: %d read, %d matched to their tweet (%d with another date), %d unmatched (%d of them on a tweet that does not hold them: back to the profile URL, undated)\n",
+		rep.Sources, rep.Matched, rep.DateChanged, len(rep.Unmatched), rep.Reset)
 	if !apply {
 		fmt.Println("dry run: nothing written to fact_sources (use --apply)")
 	}

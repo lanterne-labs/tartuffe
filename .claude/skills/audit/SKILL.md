@@ -262,7 +262,11 @@ the day the page was created); a fact on a video page whose address does not
 name the person (`/videos/` in the URL: the headline of another video, dated
 at the page's date); a fact text that gives the current year to a day and
 month of an article of an earlier year (« le 27 octobre 2026 » from an
-article of 2025: extracted before the article's date was the reference).
+article of 2025: extracted before the article's date was the reference); a
+fact source dated after the day it was stored (`published_at > scraped_at`:
+a fact of June on a tweet of October, the tweet redate matched it to a tweet
+that does not hold its quote); a news page whose stored date differs from the
+date written in its URL (a search label « il y a 1 mois » read as a day).
 
 ### Every wrong row gets its cause, written down
 

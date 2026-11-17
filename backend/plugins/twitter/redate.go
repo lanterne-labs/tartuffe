@@ -23,6 +23,17 @@ import (
 // Apply false nothing changes in fact_sources: the report says what would.
 // The fetched text is stored in both modes: it is data we had, not a
 // judgement.
+//
+// A source is matched among the tweets of its handle posted before it was
+// stored: a later tweet cannot be where it comes from. When no tweet holds
+// the quote whole, the tweet must hold redateMinOverlap of its words. The
+// first run (2026-10-30) used the batch's 0.6 over every tweet of the handle
+// and no date bound: 436 sources whose tweet was not stored yet went to
+// another tweet that shared their common words, 400 of them to a tweet
+// posted months after the fact was stored (a fact of June on a tweet of 29
+// October, audit 2026-11-17). A source that sits on a tweet and matches none
+// any more goes back to the profile URL, undated, until its tweet is stored
+// (the backfill reads the older tweets) and a later run finds it.
 
 // RedateStorer is the storage surface of Redate.
 type RedateStorer interface {
@@ -51,6 +62,7 @@ type RedateReport struct {
 	Sources       int // tweet fact sources read
 	Matched       int // fact sources a tweet of their handle holds
 	DateChanged   int // matched sources whose date differs from the stored one
+	Reset         int // sources on a tweet that does not hold them: back to the profile URL, undated
 	Unmatched     []RedateUnmatched
 }
 
@@ -61,6 +73,13 @@ type RedateUnmatched struct {
 	Handle       string `json:"handle"`
 	Quote        string `json:"quote"`
 }
+
+// redateMinOverlap is the share of a quote's words a tweet must hold to be
+// its source when no tweet of the handle holds the quote whole. Measured on
+// 2026-11-17 over the 807 sources matched by their words: at 0.9 and above 5
+// of 371 sat on a tweet posted after the source was stored, under it 400 of
+// 436.
+const redateMinOverlap = 0.9
 
 // redatePage is how many rows one storage call reads.
 const redatePage = 1000
@@ -143,9 +162,19 @@ func Redate(ctx context.Context, storer RedateStorer, fetcher RedateFetcher, opt
 			afterID = r.ID
 			rep.Sources++
 			handle, _ := r.Metadata["twitter_handle"].(string)
-			tw := findMatchingTweet(backend.Fact{OriginalQuote: r.OriginalQuote}, byHandle[strings.ToLower(handle)])
+			tw := matchTweet(backend.Fact{OriginalQuote: r.OriginalQuote}, postedBefore(byHandle[strings.ToLower(handle)], r.ScrapedAt), redateMinOverlap)
 			if tw == nil {
 				rep.Unmatched = append(rep.Unmatched, RedateUnmatched{FactSourceID: r.ID, FactID: r.FactID, Handle: handle, Quote: r.OriginalQuote})
+				if handle == "" || !strings.Contains(r.SourceURL, "/status/") {
+					continue
+				}
+				rep.Reset++
+				if !opts.Apply {
+					continue
+				}
+				if err := storer.SetFactSourceURLAndDate(ctx, r.ID, "https://x.com/"+strings.ToLower(handle), nil); err != nil {
+					return rep, err
+				}
 				continue
 			}
 			rep.Matched++
@@ -161,6 +190,21 @@ func Redate(ctx context.Context, storer RedateStorer, fetcher RedateFetcher, opt
 		}
 	}
 	return rep, nil
+}
+
+// postedBefore returns the tweets posted before the moment a source was
+// stored (a tweet without a date is kept; a zero moment keeps them all).
+func postedBefore(tweets []Tweet, stored time.Time) []Tweet {
+	if stored.IsZero() {
+		return tweets
+	}
+	out := make([]Tweet, 0, len(tweets))
+	for _, tw := range tweets {
+		if tw.CreatedAt == nil || !tw.CreatedAt.After(stored) {
+			out = append(out, tw)
+		}
+	}
+	return out
 }
 
 // allDocuments reads every document of the source type.

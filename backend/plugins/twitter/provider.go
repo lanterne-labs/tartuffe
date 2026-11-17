@@ -658,6 +658,12 @@ func isLanguageCode(lang string) bool {
 // facts of a batch of 20 the first tweet's URL and date (review of
 // 2026-10-30: all 17013 tweet facts carried the profile URL).
 func findMatchingTweet(fact backend.Fact, batch []Tweet) *Tweet {
+	return matchTweet(fact, batch, tweetQuoteMinOverlap)
+}
+
+// matchTweet is findMatchingTweet with the share of the quote's words the
+// tweet must hold when none holds the quote whole.
+func matchTweet(fact backend.Fact, batch []Tweet, minOverlap float64) *Tweet {
 	if fact.SourceURL != "" {
 		for i := range batch {
 			if batch[i].URL == fact.SourceURL {
@@ -691,7 +697,7 @@ func findMatchingTweet(fact backend.Fact, batch []Tweet) *Tweet {
 			best, bestOverlap = &batch[i], o
 		}
 	}
-	if bestOverlap >= tweetQuoteMinOverlap {
+	if bestOverlap >= minOverlap {
 		return best
 	}
 	return nil
@@ -699,7 +705,9 @@ func findMatchingTweet(fact backend.Fact, batch []Tweet) *Tweet {
 
 // tweetQuoteMinOverlap is the share of a quote's words a tweet must hold to
 // be its source when no tweet holds the quote whole (the extractor trims,
-// fixes typos and cuts URLs out of the quote).
+// fixes typos and cuts URLs out of the quote). It holds for the batch the
+// fact was extracted from (20 tweets, one of them its source); over every
+// tweet of a handle the common words alone reach it (redateMinOverlap).
 const tweetQuoteMinOverlap = 0.6
 
 // quoteWords lowercases a text and splits it into its words (letters and

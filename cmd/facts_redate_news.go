@@ -25,7 +25,9 @@ import (
 // this repairs the stored pages: the date in the URL first, then, with
 // --search, the date of the search result for the page's title that links
 // to the same page. --late first undates the pages dated after the end of the
-// search window that found them (audit 2026-11-04c).
+// search window that found them (audit 2026-11-04c). --relative first undates
+// the pages dated from a search label in weeks, months or years ("il y a 1
+// mois" read as a day, audit 2026-11-17).
 var factsRedateNewsCmd = &cobra.Command{
 	Use:         "redate-news",
 	Short:       "Date the undated news fact sources from their URL or the search result",
@@ -37,6 +39,7 @@ func init() {
 	factsCmd.AddCommand(factsRedateNewsCmd)
 	factsRedateNewsCmd.Flags().Bool("apply", false, "write the dates (default: report only)")
 	factsRedateNewsCmd.Flags().Bool("late", false, "first undate the pages dated after the end of the search window that found them (their update, not their publication), then date them again")
+	factsRedateNewsCmd.Flags().Bool("relative", false, "first undate the pages dated from a search label in weeks, months or years (\"il y a 1 mois\": no day), then date them again")
 	factsRedateNewsCmd.Flags().Bool("search", false, "search the page's title for the pages whose URL carries no date (one search per page)")
 }
 
@@ -46,6 +49,7 @@ func runFactsRedateNews(cmd *cobra.Command, args []string) error {
 	apply, _ := cmd.Flags().GetBool("apply")
 	withSearch, _ := cmd.Flags().GetBool("search")
 	late, _ := cmd.Flags().GetBool("late")
+	relative, _ := cmd.Flags().GetBool("relative")
 
 	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
@@ -66,6 +70,19 @@ func runFactsRedateNews(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("news pages dated after their search window: %d (%d fact sources)", lp, ls)
+		if !apply {
+			fmt.Println("; dry run: kept (the counts below leave them out)")
+		} else {
+			fmt.Println("; undated")
+		}
+	}
+
+	if relative {
+		rp, rs, err := storer.ClearRelativeNewsPageDates(ctx, relativeDateTolerance, apply)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("news pages dated from a label in weeks, months or years: %d (%d fact sources)", rp, rs)
 		if !apply {
 			fmt.Println("; dry run: kept (the counts below leave them out)")
 		} else {
@@ -112,6 +129,11 @@ func runFactsRedateNews(cmd *cobra.Command, args []string) error {
 	}
 	return nil
 }
+
+// relativeDateTolerance is how long after its search a page is fetched at
+// most: a date that far, to the clock, from a whole number of weeks or months
+// before the fetch came from a relative label.
+const relativeDateTolerance = 2 * time.Minute
 
 // searchResultDate searches the page's title and returns the date of the
 // result that links to the same page, or nil.
