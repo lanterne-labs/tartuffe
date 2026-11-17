@@ -299,3 +299,14 @@ func TestVotes(t *testing.T) {
 		t.Errorf("local GPU box: got %d votes, want 3", got)
 	}
 }
+
+func TestPerCall(t *testing.T) {
+	setRouting(t, ClaudeRouting(EndpointClaudeTeam, &ClaudeTeamEndpoint{}, "claude-sonnet-5-5"))
+	if got := PerCall(TaskDetect, 4); got != 4 {
+		t.Errorf("claude seats: got %d items per call, want 4", got)
+	}
+	setRouting(t, localRouting())
+	if got := PerCall(TaskDetect, 4); got != 1 {
+		t.Errorf("local GPU box: got %d items per call, want 1", got)
+	}
+}

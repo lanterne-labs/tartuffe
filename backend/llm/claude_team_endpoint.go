@@ -564,9 +564,15 @@ func (t *ClaudeTeamEndpoint) run(ctx context.Context, seat claudeSeat, creq Clau
 
 // childEnv returns the environment of the CLI: the parent environment
 // without the variables of the CLI and of the seats, plus the seat token
-// token, the output limit and 2 fixed variables of the CLI. DISABLE_AUTOUPDATER=1 stops
+// token, the output limit and the fixed variables of the CLI. DISABLE_AUTOUPDATER=1 stops
 // the CLI from updating the pinned binary. CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-// stops its telemetry and other traffic that a call does not need. A parent
+// stops its telemetry and other traffic that a call does not need.
+// CLAUDE_CODE_PROMPT_CACHE_TTL=5m and FORCE_PROMPT_CACHING_5M=1 (the name of
+// older versions) keep the cache at 5 minutes: on a subscription the CLI
+// takes the 1-hour cache, whose writes cost twice the input price, and it
+// writes the whole user message of every call, text that no later call
+// reads (2026-11: no plain input token at all, 185 million written in 5
+// days). The rules of a task stay warm at 5 minutes while its calls run. A parent
 // variable can change the bill or leak the token:
 //   - ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN bills the API, not the seat.
 //   - CLAUDE_CODE_USE_BEDROCK, _VERTEX or _FOUNDRY bills a cloud provider.
@@ -588,6 +594,8 @@ func childEnv(token string, maxTokens int) []string {
 		"CLAUDE_CODE_MAX_OUTPUT_TOKENS="+strconv.Itoa(maxTokens),
 		"DISABLE_AUTOUPDATER=1",
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"CLAUDE_CODE_PROMPT_CACHE_TTL=5m",
+		"FORCE_PROMPT_CACHING_5M=1",
 	)
 }
 

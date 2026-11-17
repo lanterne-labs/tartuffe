@@ -17,9 +17,9 @@ func TestBuildFactExtractionPrompt(t *testing.T) {
 
 	plain := BuildFactExtractionPrompt(base)
 	for _, want := range []string{
-		"REFERENCE DATE: 2026-09-16",
+		"REFERENCE DATE (given under Input Data below, YYYY-MM-DD)",
 		"Focus especially on the primary subject (named under Input Data below)",
-		"Primary Subject: Marine Le Pen\nSource URL: https://example.com/article\nContent:\nArticle body with 100% and a \"quote\".",
+		"## Input Data\nREFERENCE DATE: 2026-09-16\nPrimary Subject: Marine Le Pen\nSource URL: https://example.com/article\nContent:\nArticle body with 100% and a \"quote\".",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("prompt missing %q", want)
@@ -32,7 +32,7 @@ func TestBuildFactExtractionPrompt(t *testing.T) {
 	withPlugin := base
 	withPlugin.PluginInstructions = PartyInstructions
 	got := BuildFactExtractionPrompt(withPlugin)
-	if !strings.Contains(got, "## Additional Context\n"+PartyInstructions+"\n\n## Input Data") {
+	if !strings.Contains(got, "## Additional Context\n"+PartyInstructions+"\n\n## Input Data\nREFERENCE DATE: 2026-09-16\n") {
 		t.Fatal("plugin instructions not rendered between the rules and the input data")
 	}
 

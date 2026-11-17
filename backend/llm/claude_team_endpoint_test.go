@@ -122,7 +122,8 @@ func TestClaudeTeamEndpoint_Success(t *testing.T) {
 		env[k] = v
 	}
 	for name := range env {
-		if name == "CLAUDE_CODE_OAUTH_TOKEN" || name == "CLAUDE_CODE_MAX_OUTPUT_TOKENS" || name == "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" {
+		if name == "CLAUDE_CODE_OAUTH_TOKEN" || name == "CLAUDE_CODE_MAX_OUTPUT_TOKENS" || name == "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" ||
+			name == "CLAUDE_CODE_PROMPT_CACHE_TTL" {
 			continue
 		}
 		for _, prefix := range []string{"ANTHROPIC_", "CLAUDE_CODE_", "CLAUDECODE", "CLAUDE_TEAM_PLAN_"} {
@@ -130,6 +131,9 @@ func TestClaudeTeamEndpoint_Success(t *testing.T) {
 				t.Errorf("the child env must not hold %s", name)
 			}
 		}
+	}
+	if env["CLAUDE_CODE_PROMPT_CACHE_TTL"] != "5m" || env["FORCE_PROMPT_CACHING_5M"] != "1" {
+		t.Errorf("the child env must ask for the 5-minute cache: %q, %q", env["CLAUDE_CODE_PROMPT_CACHE_TTL"], env["FORCE_PROMPT_CACHING_5M"])
 	}
 	if env["KEEP_ME"] != "yes" {
 		t.Error("the child env must keep the other parent variables")

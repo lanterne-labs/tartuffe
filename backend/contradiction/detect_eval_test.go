@@ -4,10 +4,12 @@ package contradiction
 
 import (
 	"encoding/json"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
 
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/llmtest"
 	"digital-mirror/backend/promptrules"
 )
@@ -57,6 +59,12 @@ func evalDate(t *testing.T, s string) *time.Time {
 	return &d
 }
 
+// detectEvalOrder is the order the eval sends its n pairs in: the same
+// shuffle at every run.
+func detectEvalOrder(n int) []int {
+	return rand.New(rand.NewSource(1)).Perm(n)
+}
+
 // TestDetectEval measures the batch contradiction detector on the 60 pairs.
 // It logs a scorecard on the pairs labelled "sure" and on all pairs; it fails
 // only on detector errors.
@@ -100,9 +108,23 @@ func TestDetectEval(t *testing.T) {
 			TextB: p.TextB, DateB: date(p.DateB), AlsoB: p.AlsoB,
 		}
 	}
+	// The pairs go to the detector as production sends them: as many in one
+	// call as the endpoint takes (llm.PerCall). The file lists the
+	// contradictions first: a fixed shuffle mixes them in the calls.
+	perCall := llm.PerCall(llm.TaskDetect, PairsPerCall)
+	t.Logf("%d pairs per call", perCall)
+	order := detectEvalOrder(len(pairs))
 	results := make([]BatchResult, len(pairs))
-	llmtest.ForEach(len(pairs), func(i int) {
-		results[i] = detector.AreContradictoryBatch(ctx, []FactPair{factPairs[i]})[0]
+	llmtest.ForEach((len(pairs)+perCall-1)/perCall, func(c int) {
+		at := c * perCall
+		idx := order[at:min(at+perCall, len(pairs))]
+		call := make([]FactPair, len(idx))
+		for j, i := range idx {
+			call[j] = factPairs[i]
+		}
+		for j, r := range detector.AreContradictoryBatch(ctx, call) {
+			results[idx[j]] = r
+		}
 	})
 	errorsSeen := 0
 	for i, p := range pairs {
