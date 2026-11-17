@@ -32,8 +32,8 @@ func TestScreenPairs(t *testing.T) {
 	}
 
 	f := &clearAll{}
-	toJudge, cleared := screenPairs(context.Background(), f, pairs)
-	if f.asked != 2 || len(cleared) != 2 || cleared[0].factAID != 1 || cleared[1].factAID != 7 {
+	toJudge, cleared, asked := screenPairs(context.Background(), f, pairs)
+	if asked != 2 || f.asked != 2 || len(cleared) != 2 || cleared[0].factAID != 1 || cleared[1].factAID != 7 {
 		t.Fatalf("want pairs 1 and 7 cleared, got asked=%d cleared=%v", f.asked, cleared)
 	}
 	if len(toJudge) != 2 || toJudge[0].factAID != 3 || toJudge[1].factAID != 5 {
@@ -41,13 +41,13 @@ func TestScreenPairs(t *testing.T) {
 	}
 
 	// A filter that does not answer clears nothing.
-	toJudge, cleared = screenPairs(context.Background(), &clearAll{fail: true}, pairs)
+	toJudge, cleared, _ = screenPairs(context.Background(), &clearAll{fail: true}, pairs)
 	if len(toJudge) != len(pairs) || len(cleared) != 0 {
 		t.Fatalf("a failing filter must leave every pair to the judge, got %d to judge, %d cleared", len(toJudge), len(cleared))
 	}
 
 	// No filter: the pairs as they are.
-	toJudge, cleared = screenPairs(context.Background(), pairfilter.All{}, pairs)
+	toJudge, cleared, _ = screenPairs(context.Background(), pairfilter.All{}, pairs)
 	if len(toJudge) != len(pairs) || cleared != nil {
 		t.Fatalf("no filter: got %d to judge, %d cleared", len(toJudge), len(cleared))
 	}

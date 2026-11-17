@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-17: The usage of the seats is recorded
+
+- **Why.** The changes of the day (four pairs per call, the extraction cache, the pair filter) are meant to make a seat last longer, and nothing recorded how full a seat is: `llm_usage` has calls and tokens at list price, and how Anthropic weighs them against a seat's window is not published.
+- **What.** With each record of the LLM usage (the end of a feed, the end of a maintenance pass), the worker records the percentages of the 5 h and 7 d windows of each seat that serves (job `seat_usage`), from the readings the seat reserve already makes. The detection also records how many pairs the pair filter was asked about (`pairs_filter_asked`), beside those it cleared.
+- **How to read it.** Points of `seven_day_percent` gained between two records, divided by the pairs judged or the facts extracted between them. Before the changes there is no such row: the baseline is the token usage per call of `llm_usage` (14 November: 18,903 detect calls, 21 M tokens written to the cache and 411 M read, 170 USD at list price, about one pair per call).
+
 ## 2026-11-17: A pair filter in front of the detection's judge
 
 - **State found.** The detection sends every candidate pair to the judge (Sonnet on a seat, a rulebook of 21,000 tokens): 146,000 pairs from 9 to 14 November for 24 contradictions. Most pairs plainly do not conflict.

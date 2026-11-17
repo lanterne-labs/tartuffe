@@ -17,22 +17,24 @@ const screenChunk = 200
 // the pairs the filter says cannot conflict: they are recorded as judged "no"
 // without a call to the judge. A pair a producer queued and a near-identical
 // pair (the grouping check reads the judge's "no" on it) always go to the
-// judge, and so does every pair when the filter does not answer.
-func screenPairs(ctx context.Context, filter pairfilter.Filter, pairs []pairInfo) (toJudge, cleared []pairInfo) {
+// judge, and so does every pair when the filter does not answer. asked is how
+// many pairs the filter was asked about: asked pairs with none cleared is a
+// filter that is down.
+func screenPairs(ctx context.Context, filter pairfilter.Filter, pairs []pairInfo) (toJudge, cleared []pairInfo, asked int) {
 	if _, off := filter.(pairfilter.All); off {
-		return pairs, nil
+		return pairs, nil, 0
 	}
 	keep := make([]bool, len(pairs))
-	var asked []int
+	var ask []int
 	for i, p := range pairs {
 		if p.queued || p.similarity >= groupingSimFloor {
 			keep[i] = true
 			continue
 		}
-		asked = append(asked, i)
+		ask = append(ask, i)
 	}
-	for at := 0; at < len(asked); at += screenChunk {
-		chunk := asked[at:min(at+screenChunk, len(asked))]
+	for at := 0; at < len(ask); at += screenChunk {
+		chunk := ask[at:min(at+screenChunk, len(ask))]
 		in := make([]pairfilter.Pair, len(chunk))
 		for j, i := range chunk {
 			p := pairs[i]
@@ -59,7 +61,7 @@ func screenPairs(ctx context.Context, filter pairfilter.Filter, pairs []pairInfo
 			cleared = append(cleared, p)
 		}
 	}
-	return toJudge, cleared
+	return toJudge, cleared, len(ask)
 }
 
 func filterDate(date *time.Time) string {

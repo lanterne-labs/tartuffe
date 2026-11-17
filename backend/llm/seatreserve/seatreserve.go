@@ -81,6 +81,24 @@ func New(percent float64) *Reserve {
 	return &Reserve{Percent: percent}
 }
 
+// Usages returns the last usage read of each seat, by name: the seats that
+// served at a reading (a seat at its limit is not read). Empty without a
+// reserve.
+func (r *Reserve) Usages() map[string]Usage {
+	out := map[string]Usage{}
+	if r == nil {
+		return out
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name, rd := range r.readings {
+		if rd.ok {
+			out[name] = rd.usage
+		}
+	}
+	return out
+}
+
 // Hold returns the seat to keep for the reserved tasks among the seats that
 // serve, and until when; "" when a seat still has room, when the usage of a
 // seat is not known (a reading failed: nothing is kept, as without a
