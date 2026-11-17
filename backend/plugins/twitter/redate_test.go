@@ -124,3 +124,52 @@ func TestRedate(t *testing.T) {
 		t.Error("an unmatched source is not written")
 	}
 }
+
+// A source is never moved to a tweet posted after it was stored, nor to a
+// tweet that only shares its common words: the first run put a fact of June
+// on a tweet of October (audit 2026-11-17). Such a source goes back to the
+// profile URL, undated; once its own tweet is stored, a run finds it.
+func TestRedateLeavesATweetThatDoesNotHoldTheQuote(t *testing.T) {
+	june := time.Date(2026, 6, 8, 18, 0, 0, 0, time.UTC)
+	stored := time.Date(2026, 6, 9, 3, 51, 0, 0, time.UTC)
+	october := time.Date(2026, 10, 29, 9, 36, 0, 0, time.UTC)
+	const quote = "Je leur apporte tout mon soutien face à ces violences et ces attaques inouïes envers la liberté artistique."
+	later := core.SourceDocument{ID: 1, URL: "https://x.com/a/status/9", PublishedAt: &october,
+		Content:  "Je leur apporte tout mon soutien face à ces violences et ces attaques inouïes envers la liberté artistique. Et à tous les autres aussi.",
+		Metadata: map[string]any{"tweet_id": "9", "author_handle": "A"}}
+	words := core.SourceDocument{ID: 2, URL: "https://x.com/a/status/2", PublishedAt: &june,
+		Content:  "Face à ces attaques de l'extrême droite, tout mon soutien à ces journalistes : je leur apporte mon aide et ma confiance.",
+		Metadata: map[string]any{"tweet_id": "2", "author_handle": "A"}}
+	f := &redateFakes{
+		docs: []core.SourceDocument{later, words},
+		sources: []storage.FactSourceRow{
+			{ID: 10, FactID: 100, SourceURL: "https://x.com/a/status/9", PublishedAt: &october, ScrapedAt: stored, OriginalQuote: quote, Metadata: map[string]any{"twitter_handle": "A"}},
+			{ID: 11, FactID: 101, SourceURL: "https://x.com/a", PublishedAt: &june, ScrapedAt: stored, OriginalQuote: "Rien de tout cela n'est dans un tweet.", Metadata: map[string]any{"twitter_handle": "A"}},
+		},
+	}
+	rep, err := Redate(context.Background(), f, f, RedateOptions{Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Matched != 0 || len(rep.Unmatched) != 2 || rep.Reset != 1 {
+		t.Errorf("report: %+v", rep)
+	}
+	if got := f.set[10]; got[0] != "https://x.com/a" || got[1].(*time.Time) != nil {
+		t.Errorf("source 10 goes back to the profile URL, undated; got %v", got)
+	}
+	if _, ok := f.set[11]; ok {
+		t.Error("a source already on the profile URL is left as it is")
+	}
+
+	// Its own tweet is stored by the backfill: the next run finds it.
+	f.docs = append(f.docs, core.SourceDocument{ID: 3, URL: "https://x.com/a/status/1", PublishedAt: &june,
+		Content:  "Violences à la Nuit Blanche. " + quote,
+		Metadata: map[string]any{"tweet_id": "1", "author_handle": "A"}})
+	f.sources[0].SourceURL, f.sources[0].PublishedAt = "https://x.com/a", nil
+	if _, err := Redate(context.Background(), f, f, RedateOptions{Apply: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.set[10]; got[0] != "https://x.com/a/status/1" || !got[1].(*time.Time).Equal(june) {
+		t.Errorf("source 10: got %v, want its tweet of June", got)
+	}
+}

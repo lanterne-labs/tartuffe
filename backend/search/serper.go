@@ -350,6 +350,13 @@ func (s *SerperProvider) SearchImages(query string, opts ImageSearchOptions) ([]
 // relative ("il y a 3 jours", "hier"). Returns (parsed_time, true) on success,
 // (zero, false) otherwise so callers leave NewsResult.Date as nil.
 //
+// A label in weeks, months or years ("il y a 1 mois", "2 weeks ago") names
+// no day: "il y a 1 mois" is any day from one to two months back. Read as
+// now minus the unit, it dated 97 pages up to 25 days after their
+// publication (a live of 29 August stored as 17 September, audit
+// 2026-11-17), so it gives no date: the page's own date, its URL's or the
+// article's text date it, else the page stays undated.
+//
 // `now` anchors all relative arithmetic. Tests pin a fixed `now` to keep
 // assertions deterministic.
 func parseSerperDate(s string, now time.Time) (time.Time, bool) {
@@ -453,39 +460,32 @@ func parseSerperRelativeDate(s string, now time.Time) (time.Time, bool) {
 	// Numeric forms ("3 days ago", "il y a 3 jours").
 	if m := serperRelEnNumeric.FindStringSubmatch(s); m != nil {
 		n, _ := strconv.Atoi(m[1])
-		return subtractUnits(now, n, m[2]), true
+		return subtractUnits(now, n, m[2])
 	}
 	if m := serperRelFrNumeric.FindStringSubmatch(s); m != nil {
 		n, _ := strconv.Atoi(m[1])
-		return subtractUnits(now, n, m[2]), true
+		return subtractUnits(now, n, m[2])
 	}
 
 	// Singular-article forms ("an hour ago", "il y a une heure").
 	if m := serperRelEnArticle.FindStringSubmatch(s); m != nil {
-		return subtractUnits(now, 1, m[1]), true
+		return subtractUnits(now, 1, m[1])
 	}
 	if m := serperRelFrArticle.FindStringSubmatch(s); m != nil {
-		return subtractUnits(now, 1, m[1]), true
+		return subtractUnits(now, 1, m[1])
 	}
 
 	return time.Time{}, false
 }
 
-// subtractUnits applies "now - n×unit" using calendar-aware arithmetic for
-// week/month/year so day-of-month wrapping behaves correctly.
-func subtractUnits(now time.Time, n int, unit string) time.Time {
+// subtractUnits is now minus n hours or days. A longer unit (week, month,
+// year) names no day and gives no date.
+func subtractUnits(now time.Time, n int, unit string) (time.Time, bool) {
 	switch strings.ToLower(unit) {
 	case "hour", "heure":
-		return now.Add(-time.Duration(n) * time.Hour)
+		return now.Add(-time.Duration(n) * time.Hour), true
 	case "day", "jour":
-		return now.AddDate(0, 0, -n)
-	case "week", "semaine":
-		return now.AddDate(0, 0, -7*n)
-	case "month", "mois":
-		return now.AddDate(0, -n, 0)
-	case "year", "an", "année":
-		return now.AddDate(-n, 0, 0)
+		return now.AddDate(0, 0, -n), true
 	}
-	// Shouldn't reach here — the regexes constrain the unit set — but be safe.
-	return now
+	return time.Time{}, false
 }
