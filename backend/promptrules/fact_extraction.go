@@ -11,7 +11,7 @@ import (
 // Plugins can optionally inject additional instructions via the {{PLUGIN_INSTRUCTIONS}} placeholder.
 const CoreFactExtractionPrompt = `You are an expert AI assistant specialized in extracting **verifiable factual statements** from news articles.
 
-REFERENCE DATE: %s (YYYY-MM-DD) — the article's publication date when it is known, else today's date. Use it as the reference point for any relative date phrase ("2 days ago", "il y a 3 jours", "yesterday", "hier", "lundi", "la semaine dernière") you encounter — convert each to an absolute YYYY-MM-DD value when populating date fields below. A weekday ("lundi", "mardi") names the last such day on or before the REFERENCE DATE, never a day after it.
+REFERENCE DATE (given under Input Data below, YYYY-MM-DD) — the article's publication date when it is known, else today's date. Use it as the reference point for any relative date phrase ("2 days ago", "il y a 3 jours", "yesterday", "hier", "lundi", "la semaine dernière") you encounter — convert each to an absolute YYYY-MM-DD value when populating date fields below. A weekday ("lundi", "mardi") names the last such day on or before the REFERENCE DATE, never a day after it.
 
 ## Task
 Extract facts about ALL relevant persons, parties, and organizations mentioned in the article.
@@ -197,6 +197,7 @@ Return a JSON array. Each object has 10 fields (in this order):
 %s
 
 ## Input Data
+REFERENCE DATE: %s
 Primary Subject: %s
 Source URL: %s
 Content:
@@ -297,8 +298,12 @@ func BuildFactExtractionPrompt(cfg FactExtractorConfig) string {
 		// and a name in the intro ended that start before the rules, so the
 		// rules were written to the cache again for every person (2026-11-09:
 		// 4,900 tokens written per extract call, 1,200 read).
-		now.Format("2006-01-02"), // First %s - REFERENCE DATE for relative-date resolution
-		pluginSection,            // Second %s - plugin instructions section
+		// The reference date too: in the intro, each date started a prompt
+		// family of its own and the rules after it were written to the cache
+		// again for every article of another day (2026-11-14: 11,500 tokens
+		// written per extract call, 4,000 read).
+		pluginSection,            // First %s - plugin instructions section
+		now.Format("2006-01-02"), // Second %s - REFERENCE DATE for relative-date resolution
 		cfg.TargetName,           // Third %s - target name in input data
 		cfg.SourceURL,            // Fourth %s - source URL
 		cfg.Content,              // Fifth %s - content

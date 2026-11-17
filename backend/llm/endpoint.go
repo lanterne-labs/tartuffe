@@ -500,6 +500,22 @@ func Votes(task Task, votes int) int {
 	return votes
 }
 
+// PerCall is how many items one call of task judges on the active routing: n
+// on a Claude endpoint, where the rulebook of a judge is most of the tokens of
+// a call and one call for n items reads it once instead of n times, and 1 on
+// the local GPU box, whose smaller model swaps the verdicts of the items that
+// share a prompt.
+func PerCall(task Task, n int) int {
+	r := activeRouting()
+	if r == nil {
+		return 1
+	}
+	if e, ok := r.Endpoints[r.Route(task).Endpoint].(steadyEndpoint); ok && e.Steady() {
+		return max(1, n)
+	}
+	return 1
+}
+
 // LocalContextTokens is the context of a call on the local endpoint: the
 // mirror-llm slot holds 16k tokens (llama-swap entry: -c 32768 -np 2), 14k of
 // them usable. An endpoint that does not say otherwise gets it.

@@ -680,8 +680,9 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 		personContradictions := 0
 		// The verdicts of up to llm.Concurrency() calls are asked at once;
 		// what follows them (verification, recording, grouping) runs in
-		// pair order. Locally one call at a time.
-		step := MaxPairsPerBatchSync * llm.Concurrency()
+		// pair order. Locally one call at a time, of one pair.
+		perCall := llm.PerCall(llm.TaskDetect, PairsPerCall)
+		step := perCall * llm.Concurrency()
 
 		for i := 0; i < len(pp.pairs); i += step {
 			if err := ctx.Err(); err != nil {
@@ -694,7 +695,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 			}
 			batch := pp.pairs[i:end]
 
-			results := judgeConcurrently(ctx, detector, batch, MaxPairsPerBatchSync)
+			results := judgeConcurrently(ctx, detector, batch, perCall)
 			totalPairsChecked += len(batch)
 
 			var pairResults []storage.PairCheckResult

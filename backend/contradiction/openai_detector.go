@@ -15,21 +15,14 @@ import (
 )
 
 const (
-	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single
-	// LLM call on the Gemini BATCH path. Sized so the prompt + the
-	// contradictionMaxTokens reservation stays well under a 16k context window:
-	// ContradictionRulesAndExamples + 3 pairs ~= 2.6k tokens, plus
-	// contradictionMaxTokens=2048 = ~4.7k total reservation. 3 pairs is the
-	// historical accuracy baseline on Gemini (we briefly raised to 5 for cost;
-	// cross-pair confusion observed at 5, reverted).
-	MaxPairsPerBatch = 3
-	// MaxPairsPerBatchSync is the bundle size on the sync OpenAI-compatible path.
-	// Held at 1: smaller models (local Gemma) occasionally swap fact IDs across
-	// pairs when verdicts share a prompt — observed on the eval as a fabricated
-	// contradiction between an unrelated pair carrying another pair's reason.
-	// One pair per call eliminates the swap entirely. Per-call latency is higher
-	// but throughput on a local GPU is fine.
-	MaxPairsPerBatchSync = 1
+	// PairsPerCall is how many pairs one call judges where the endpoint takes
+	// more than one (llm.PerCall: a Claude endpoint). The rulebook is about
+	// 21,000 tokens and a pair about 1,000: one pair per call read the rulebook
+	// once per pair (2026-11: 49,000 calls in 5 days for 27 contradictions).
+	// The local GPU box keeps one pair per call: its smaller model swapped the
+	// facts of the pairs that shared a prompt (a contradiction between an
+	// unrelated pair, with the reason of another pair).
+	PairsPerCall = 4
 	// contradictionMaxTokens caps the LLM response budget. The reservation is
 	// charged against the context window BEFORE generation, so every token
 	// reserved is a token the prompt cannot use.
@@ -43,7 +36,8 @@ const (
 	// 4096 was sized for Gemma's thinking mode. This constant is the answer
 	// budget only: when llm.TaskDetect thinks, the client adds the thinking
 	// budget on top (llm/task.go). 1024 is ~7.6x the
-	// observed maximum and restores ~3000 tokens of prompt headroom. The
+	// observed maximum and restores ~3000 tokens of prompt headroom. A call
+	// of several pairs gets this budget for each pair. The
 	// "contradiction token usage" log line reports completion_tokens and warns
 	// on finish_reason=="length", so a too-small budget announces itself.
 	contradictionMaxTokens = 1024
@@ -454,7 +448,7 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.0,
-		MaxTokens:   contradictionMaxTokens,
+		MaxTokens:   contradictionMaxTokens * len(pairs),
 		Task:        llm.TaskDetect,
 	})
 	if err != nil {
@@ -484,8 +478,8 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		Int("cached_prompt_tokens", chatResp.Usage.PromptTokensDetails.CachedTokens).
 		Int("completion_tokens", chatResp.Usage.CompletionTokens).
 		Int("total_tokens", chatResp.Usage.TotalTokens).
-		Int("reserved_max_tokens", llm.ReservedTokens(llm.TaskDetect, contradictionMaxTokens)).
-		Int("unused_reservation", llm.ReservedTokens(llm.TaskDetect, contradictionMaxTokens)-chatResp.Usage.CompletionTokens).
+		Int("reserved_max_tokens", llm.ReservedTokens(llm.TaskDetect, contradictionMaxTokens*len(pairs))).
+		Int("unused_reservation", llm.ReservedTokens(llm.TaskDetect, contradictionMaxTokens*len(pairs))-chatResp.Usage.CompletionTokens).
 		Str("finish_reason", finishReason).
 		Int("pairs", len(pairs)).
 		Msg("contradiction token usage")
