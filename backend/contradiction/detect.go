@@ -669,6 +669,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 	totalContradictions := 0
 	totalPairsChecked := 0
 	totalPairsCleared := 0
+	totalPairsAsked := 0 // pairs the filter was asked about
 	// stopped is set when the LLM went away, when ctx was cancelled, or when
 	// the grouping data of a person failed to load (a DB error): the run
 	// stops there and every pair not yet recorded stays pending for the next
@@ -690,7 +691,8 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 			}
 		}
 		personContradictions := 0
-		pairs, cleared := screenPairs(ctx, filter, pp.pairs)
+		pairs, cleared, asked := screenPairs(ctx, filter, pp.pairs)
+		totalPairsAsked += asked
 		if len(cleared) > 0 {
 			totalPairsChecked += len(cleared)
 			totalPairsCleared += len(cleared)
@@ -829,6 +831,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 	if !opts.DryRun {
 		jobMetrics := []storage.JobMetric{
 			{JobType: "contradictions-detect", Target: "", Metric: "pairs_checked", Value: float64(totalPairsChecked)},
+			{JobType: "contradictions-detect", Target: "", Metric: "pairs_filter_asked", Value: float64(totalPairsAsked)},
 			{JobType: "contradictions-detect", Target: "", Metric: "pairs_filtered", Value: float64(totalPairsCleared)},
 			{JobType: "contradictions-detect", Target: "", Metric: "contradictions_found", Value: float64(totalContradictions)},
 		}

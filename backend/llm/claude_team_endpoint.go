@@ -101,6 +101,12 @@ type claudeSeat struct {
 	held time.Time
 }
 
+// SeatUsages returns the last usage read of each seat (see
+// seatreserve.Reserve.Usages).
+func (t *ClaudeTeamEndpoint) SeatUsages() map[string]seatreserve.Usage {
+	return t.Reserve.Usages()
+}
+
 // holdReserve gives the reserve the seats that are not at their limit
 // before a call that is not reserved, and holds for the reserved tasks the
 // seat it names: the last one with room. No seat named: no seat is held.

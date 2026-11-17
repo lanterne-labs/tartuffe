@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+
+	"digital-mirror/backend/llm/seatreserve"
 )
 
 // Endpoint is an AI endpoint that answers a call instead of the
@@ -549,6 +551,27 @@ func activeRouting() *Routing {
 	routingMu.RLock()
 	defer routingMu.RUnlock()
 	return routing
+}
+
+// SeatUsages returns the last usage read of each Claude seat of the active
+// routing, by name: the percentages of its 5 h and 7 d windows. Empty when no
+// endpoint has seats.
+func SeatUsages() map[string]seatreserve.Usage {
+	out := map[string]seatreserve.Usage{}
+	r := activeRouting()
+	if r == nil {
+		return out
+	}
+	for _, e := range r.Endpoints {
+		if s, ok := e.(interface {
+			SeatUsages() map[string]seatreserve.Usage
+		}); ok {
+			for name, u := range s.SeatUsages() {
+				out[name] = u
+			}
+		}
+	}
+	return out
 }
 
 // UsesLocal reports whether some task of the routing is served by the local

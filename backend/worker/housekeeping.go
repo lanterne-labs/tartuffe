@@ -11,6 +11,7 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/llm/seatreserve"
 	"digital-mirror/backend/pipeline"
 	"digital-mirror/backend/plugins"
 	"digital-mirror/backend/statementday"
@@ -120,6 +121,28 @@ type Housekeeping struct {
 // cost per task can be read back over weeks.
 const llmUsageJob = "llm_usage"
 
+// seatUsageJob is the job of the job_metrics rows of the seats' usage: with
+// each record of the LLM usage, one row per seat and window (target: the
+// seat; metrics five_hour_percent, seven_day_percent) with the percentage of
+// the window used then, as Anthropic counts it. The rise of seven_day_percent
+// between two records, against the calls and tokens of llm_usage between
+// them, is what the work cost in seat usage.
+const seatUsageJob = "seat_usage"
+
+// seatUsageRows turns the usage of the seats into job_metrics rows.
+func seatUsageRows(usages map[string]seatreserve.Usage) []storage.JobMetric {
+	var rows []storage.JobMetric
+	for seat, u := range usages {
+		if u.FiveHour != nil {
+			rows = append(rows, storage.JobMetric{JobType: seatUsageJob, Target: seat, Metric: "five_hour_percent", Value: u.FiveHour.Percent})
+		}
+		if u.SevenDay != nil {
+			rows = append(rows, storage.JobMetric{JobType: seatUsageJob, Target: seat, Metric: "seven_day_percent", Value: u.SevenDay.Percent})
+		}
+	}
+	return rows
+}
+
 // recordLLMUsage records the LLM usage since the last record as job_metrics.
 func (h *Housekeeping) recordLLMUsage(ctx context.Context) error {
 	if h.lastUsage == nil {
@@ -146,6 +169,7 @@ func (h *Housekeeping) recordLLMUsage(ctx context.Context) error {
 			rows = append(rows, storage.JobMetric{JobType: llmUsageJob, Target: key, Metric: metric, Value: value})
 		}
 	}
+	rows = append(rows, seatUsageRows(llm.SeatUsages())...)
 	if len(rows) == 0 {
 		return nil
 	}
