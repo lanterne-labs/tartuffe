@@ -228,6 +228,9 @@ func (h *Housekeeping) Beside(ctx context.Context) error {
 	return h.feed(ctx)
 }
 
+// Feeding reports whether the feed runs now.
+func (h *Housekeeping) Feeding() bool { return h.feeding.Load() }
+
 // MinPriority implements Idle: while the feed is due or runs, only the tasks
 // of the watch list are claimed. The backfills that run go on, but no new one
 // starts: on 2026-10-26 the 16 lanes of backfills held the seats, and the

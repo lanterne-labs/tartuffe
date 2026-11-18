@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-18: The digest does not report a day the seats cut short
+
+- **State found.** The digest of 18 November said « le flux du jour n'a pas tourné ; 713 erreurs dans les logs » on a day with 3,846 facts and 8 contradictions. The feed had started at 03:00 UTC, waited for the one seat with room, and ended at 07:03, three minutes after the digest. The errors were the lines every document and task logs when no seat answers.
+- **What.** The error counter does not count an error logged while no seat serves, and remembers that the LLM was out. On such a day the digest lists neither the late feed nor the late pass; when the day brought no fact and no contradiction it says « rien de neuf : les sièges Claude sont à leur limite ». A feed that has not ended but runs is « le flux du jour tourne encore ».
+- **Lesson.** A check on "ended by 06:00" reads as "did not run" to the person who gets it: say which of the two it is, and leave out what a known cause explains.
+
 ## 2026-11-17: The usage of the seats is recorded
 
 - **Why.** The changes of the day (four pairs per call, the extraction cache, the pair filter) are meant to make a seat last longer, and nothing recorded how full a seat is: `llm_usage` has calls and tokens at list price, and how Anthropic weighs them against a seat's window is not published.
