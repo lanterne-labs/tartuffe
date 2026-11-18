@@ -68,6 +68,26 @@ const (
 // extract: the plugins of their own read them, or nothing does.
 var notArticles = []string{"x.com", "twitter.com", "youtube.com", "youtu.be", "facebook.com", "instagram.com", "tiktok.com", "dailymotion.com", "linkedin.com"}
 
+// notToExtract are the hosts whose pages may date a statement but are not
+// articles of its time: an encyclopedia recalls years of a person's words in
+// its own summary, and its page carries the day it was created (prod, 2026-11-18:
+// 27 facts of five Wikipedia pages dated 2005 to 2016).
+var notToExtract = []string{"wikipedia.org", "wikiwand.com", "wikimonde.com", "wikiquote.org"}
+
+func hostIn(raw string, hosts []string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	for _, h := range hosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
+}
+
 func isArticleURL(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {

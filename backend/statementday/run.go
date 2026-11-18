@@ -131,7 +131,7 @@ func Run(ctx context.Context, store Store, finder *Finder, opts Options) (Result
 // articleOf returns the page that dated a statement when it is an article
 // worth extracting, dated at least by the day found.
 func articleOf(f Found) *Page {
-	if f.Day == nil || f.Page == nil || !isArticleURL(f.Page.URL) || len([]rune(strings.TrimSpace(f.Page.Text))) < ArticleMinRunes {
+	if f.Day == nil || f.Page == nil || !isArticleURL(f.Page.URL) || hostIn(f.Page.URL, notToExtract) || len([]rune(strings.TrimSpace(f.Page.Text))) < ArticleMinRunes {
 		return nil
 	}
 	page := *f.Page

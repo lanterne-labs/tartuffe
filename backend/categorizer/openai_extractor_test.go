@@ -1131,3 +1131,34 @@ INDISCRET - L'ancien ministre Eric Besson va adhérer à la Manufacture, l'assoc
 		}
 	}
 }
+
+// A concession the writer attaches to a quote in the same sentence is part
+// of the position: prod fact 257591 kept « Deux ans de plus, c'est
+// incontournable » without it and gave a false contradiction (2480).
+func TestRemoteLLMExtractor_KeepsTheConcession(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+	text := `Xavier Bertrand au gouvernement ? Retour sur ses positions sur la réforme des retraites
+
+Il continuait de qualifier cette réforme de trop «financière» et déplorait son manque d'ambition en matière
+de pénibilité et d'emploi des seniors. Malgré ses critiques, Xavier Bertrand n'a jamais nié la nécessité d'un
+allongement de la durée de travail : «Deux ans de plus, c'est incontournable», déclarait-il en janvier 2023,
+tout en privilégiant une augmentation des années de cotisation plutôt qu'un relèvement abrupt de l'âge légal.`
+	facts, err := extractorClient.ExtractFacts(context.Background(), "Xavier Bertrand", extractor.ExtractedContent{
+		URL: "http://example.com/bertrand-retraites", Title: "Xavier Bertrand", Content: text,
+	})
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	for i, f := range facts {
+		t.Logf("  [%d] normalized=%q quote=%q", i+1, f.NormalizedFactText, f.OriginalQuote)
+		fact := strings.ToLower(f.NormalizedFactText)
+		if strings.Contains(fact, "incontournable") && !strings.Contains(fact, "cotisation") {
+			t.Errorf("Fact %d drops the concession: %q", i+1, f.NormalizedFactText)
+		}
+	}
+}

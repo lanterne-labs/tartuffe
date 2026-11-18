@@ -291,3 +291,21 @@ func TestPublishedDayNeedsThePageToAgree(t *testing.T) {
 		t.Fatalf("day %s, want the page's own date (%s)", backend.FormatFactDateISO(got.Day), got.Reasoning)
 	}
 }
+
+// An encyclopedia page may give the day of a statement; it is never queued
+// as an article to extract (prod, 2026-11-18: Wikipedia pages of five
+// candidates gave facts dated at the day the page was created).
+func TestAnEncyclopediaPageIsNotQueued(t *testing.T) {
+	day := time.Date(2021, 12, 7, 0, 0, 0, 0, time.UTC)
+	text := strings.Repeat("Le Sénat a adopté mardi 7 décembre la proposition de loi. ", 60)
+	for url, want := range map[string]bool{
+		"https://fr.wikipedia.org/wiki/Bruno_Retailleau": false,
+		"https://www.wikiwand.com/fr/articles/X":         false,
+		"https://www.lemonde.fr/politique/article/1":     true,
+	} {
+		got := articleOf(Found{Day: &day, URL: url, Page: &Page{URL: url, Text: text}}) != nil
+		if got != want {
+			t.Errorf("%s: queued %v, want %v", url, got, want)
+		}
+	}
+}
