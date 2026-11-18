@@ -114,10 +114,11 @@ func runWorker(cmd *cobra.Command, args []string) error {
 		}, worker.ReportsEvery)
 	}
 
-	startDigest(ctx, storer)
-
 	d := deps.New(storer)
-	err = worker.Run(ctx, storer, worker.PluginRunner{Deps: d}, worker.NewHousekeeping(storer, d), opts)
+	hk := worker.NewHousekeeping(storer, d)
+	startDigest(ctx, storer, hk.Feeding)
+
+	err = worker.Run(ctx, storer, worker.PluginRunner{Deps: d}, hk, opts)
 	if errors.Is(err, context.Canceled) {
 		log.Info().Msg("Worker stopped")
 		return nil
@@ -129,7 +130,7 @@ func runWorker(cmd *cobra.Command, args []string) error {
 // facts and contradictions, the ballots of the vote, and whether something
 // needs a person. DIGEST_AT is its time of day in Paris (default "08:00";
 // "none": no digest).
-func startDigest(ctx context.Context, storer *storage.PostgresStorer) {
+func startDigest(ctx context.Context, storer *storage.PostgresStorer, feedRunning func() bool) {
 	at := os.Getenv("DIGEST_AT")
 	if at == "" {
 		at = "08:00"
@@ -152,10 +153,11 @@ func startDigest(ctx context.Context, storer *storage.PostgresStorer) {
 		log.Error().Err(err).Msg("Worker: no daily digest: time zone")
 		return
 	}
-	errs := &digest.ErrorCounter{}
+	// The LLM is out when no seat serves: the API key behind them has no credit.
+	errs := &digest.ErrorCounter{LLMOut: func() bool { return !llm.SeatsServing() }}
 	log.Logger = log.Logger.Hook(errs)
 	d := &digest.Digest{Store: storage.NewDigestStore(storer), Send: notifier.Send, Hour: clock.Hour(), Min: clock.Minute(), Zone: zone,
-		MaintenanceEvery: worker.MaintenanceEvery(), Errors: errs, Now: time.Now}
+		MaintenanceEvery: worker.MaintenanceEvery(), Errors: errs, FeedRunning: feedRunning, Now: time.Now}
 	// VOTE_POLLS names the isoloir poll of each event ("slug:id,…"), VOTE_MIRROR
 	// the mirror its tallies are read from (default the site's).
 	vote, err := polls.FeaturedVote(polls.NewPGStore(storer.Pool()), os.Getenv("VOTE_POLLS"), os.Getenv("VOTE_MIRROR"))

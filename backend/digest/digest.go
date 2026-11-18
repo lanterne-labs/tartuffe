@@ -51,7 +51,9 @@ type Digest struct {
 	MaintenanceEvery time.Duration
 	// Errors counts the errors the process logged (nil: not counted).
 	Errors *ErrorCounter
-	Now    func() time.Time
+	// FeedRunning says whether the feed runs now (nil: not known).
+	FeedRunning func() bool
+	Now         func() time.Time
 }
 
 // ErrorsWorthALook is how many errors logged over the period make a line of
@@ -110,7 +112,10 @@ func (d *Digest) Tick(ctx context.Context) error {
 			}
 		}
 	}
-	attention, err := d.attention(ctx, now, counts)
+	// The LLM was out at some time of the period (every seat at its limit):
+	// the known reason of a late feed, a late pass and a flood of errors.
+	llmOut := d.Errors != nil && d.Errors.LLMWasOut()
+	attention, err := d.attention(ctx, now, counts, llmOut)
 	if err != nil {
 		return err
 	}
@@ -125,10 +130,17 @@ func (d *Digest) Tick(ctx context.Context) error {
 	return d.Store.RecordDigest(ctx, counts, ballots)
 }
 
-// attention lists what needs a person now, each in a few words.
-func (d *Digest) attention(ctx context.Context, now time.Time, c Counts) ([]string, error) {
+// attention lists what needs a person now, each in a few words. A day the
+// LLM was out (llmOut: every seat at its limit, at some time since the last
+// digest) explains a feed or a pass that is late: they are not listed, and
+// the day says only "no seat" when it brought nothing at all. The errors
+// logged while the LLM was out are not counted (ErrorCounter.LLMOut).
+func (d *Digest) attention(ctx context.Context, now time.Time, c Counts, llmOut bool) ([]string, error) {
 	var out []string
-	if d.MaintenanceEvery > 0 {
+	if llmOut && c.Facts == 0 && c.Contradictions == 0 {
+		out = append(out, "rien de neuf : les sièges Claude sont à leur limite")
+	}
+	if d.MaintenanceEvery > 0 && !llmOut {
 		at, ok, err := d.Store.LastJobAt(ctx, "maintenance")
 		if err != nil {
 			return nil, err
@@ -139,13 +151,17 @@ func (d *Digest) attention(ctx context.Context, now time.Time, c Counts) ([]stri
 	}
 	// The feed runs after 03:00 UTC and has ended by 06:00.
 	day := now.UTC().Truncate(24 * time.Hour)
-	if now.After(day.Add(6 * time.Hour)) {
+	if now.After(day.Add(6*time.Hour)) && !llmOut {
 		at, ok, err := d.Store.LastJobAt(ctx, "feed")
 		if err != nil {
 			return nil, err
 		}
 		if ok && at.Before(day.Add(3*time.Hour)) {
-			out = append(out, "le flux du jour n'a pas tourné")
+			if d.FeedRunning != nil && d.FeedRunning() {
+				out = append(out, "le flux du jour tourne encore")
+			} else {
+				out = append(out, "le flux du jour n'a pas tourné")
+			}
 		}
 	}
 	if c.FailedTasks > 0 {
@@ -192,8 +208,14 @@ func (r Report) Message() string {
 
 // ErrorCounter counts the errors a process logs: a zerolog hook.
 type ErrorCounter struct {
-	mu sync.Mutex
-	n  int
+	// LLMOut says whether the LLM is out now (every seat at its limit). An
+	// error logged then is not counted: each document and task that stops for
+	// the LLM logs one, and they say nothing the outage does not. nil: never.
+	LLMOut func() bool
+
+	mu     sync.Mutex
+	n      int
+	llmOut bool // an error was logged while the LLM was out
 }
 
 // Run counts an event logged at the error level or above.
@@ -201,9 +223,25 @@ func (c *ErrorCounter) Run(_ *zerolog.Event, level zerolog.Level, _ string) {
 	if level < zerolog.ErrorLevel || level > zerolog.PanicLevel {
 		return
 	}
+	out := c.LLMOut != nil && c.LLMOut()
 	c.mu.Lock()
-	c.n++
+	if out {
+		c.llmOut = true
+	} else {
+		c.n++
+	}
 	c.mu.Unlock()
+}
+
+// LLMWasOut reports whether the LLM is out now or was when an error was
+// logged since the last Reset.
+func (c *ErrorCounter) LLMWasOut() bool {
+	if c.LLMOut != nil && c.LLMOut() {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.llmOut
 }
 
 // Count is how many errors were logged since the last Reset.
@@ -216,6 +254,6 @@ func (c *ErrorCounter) Count() int {
 // Reset starts the count again.
 func (c *ErrorCounter) Reset() {
 	c.mu.Lock()
-	c.n = 0
+	c.n, c.llmOut = 0, false
 	c.mu.Unlock()
 }

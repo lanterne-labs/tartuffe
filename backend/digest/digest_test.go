@@ -82,3 +82,52 @@ func TestDigest(t *testing.T) {
 	assert.Equal(t, store.last, store.since, "it covers the time since the last digest")
 	assert.Equal(t, 0, errs.Count(), "the count starts again")
 }
+
+// TestDigestSeatsOut: a day the LLM was out (every seat at its limit) is not
+// a thing to look at when it brought facts: the late feed, the late pass and
+// the errors logged meanwhile are not listed. A day that brought nothing
+// says why. A feed that runs at the digest is said to run.
+func TestDigestSeatsOut(t *testing.T) {
+	zone, _ := time.LoadLocation("Europe/Paris")
+	now := time.Date(2026, 11, 18, 8, 0, 10, 0, zone)
+	store := &fakeStore{counts: Counts{Facts: 3846, Contradictions: 8},
+		jobs: map[string]time.Time{"maintenance": now.Add(-60 * time.Hour), "feed": now.Add(-10 * time.Hour)}}
+	out := true
+	errs := &ErrorCounter{LLMOut: func() bool { return out }}
+	var sent []string
+	feeding := false
+	d := &Digest{Store: store, Hour: 8, Zone: zone, MaintenanceEvery: 24 * time.Hour, Errors: errs,
+		FeedRunning: func() bool { return feeding },
+		Send:        func(_ context.Context, m string) error { sent = append(sent, m); return nil },
+		Now:         func() time.Time { return now }}
+	ctx := context.Background()
+	logger := zerolog.New(io.Discard).Hook(errs)
+
+	// 713 errors while no seat served, and the seats are back at the digest.
+	for i := 0; i < 713; i++ {
+		logger.Error().Msg("LLM unavailable")
+	}
+	out = false
+	require.NoError(t, d.Tick(ctx))
+	require.Len(t, sent, 1)
+	assert.Contains(t, sent[0], "Faits : +3846\n")
+	assert.Contains(t, sent[0], "✅ Rien d'urgent")
+
+	// The next day nothing came and the seats are out: one line says why.
+	now = now.Add(24 * time.Hour)
+	store.last, out = now.Add(-24*time.Hour), true
+	store.counts = Counts{}
+	require.NoError(t, d.Tick(ctx))
+	require.Len(t, sent, 2)
+	assert.Contains(t, sent[1], "⚠️ À regarder : rien de neuf : les sièges Claude sont à leur limite")
+	assert.NotContains(t, sent[1], "flux")
+
+	// The seats serve, the feed of the day has not ended but runs.
+	now = now.Add(24 * time.Hour)
+	store.last, out, feeding = now.Add(-24*time.Hour), false, true
+	store.counts = Counts{Facts: 12}
+	store.jobs["maintenance"] = now.Add(-2 * time.Hour)
+	require.NoError(t, d.Tick(ctx))
+	require.Len(t, sent, 3)
+	assert.Contains(t, sent[2], "⚠️ À regarder : le flux du jour tourne encore")
+}
