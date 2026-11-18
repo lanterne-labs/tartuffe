@@ -134,7 +134,7 @@ func removeTarget(ctx context.Context, store Storer, r *storage.UserReport) (gon
 		} else if err != nil {
 			return false, fmt.Errorf("load fact %d: %w", r.TargetID, err)
 		}
-		if _, err := store.DeleteFactsAndCleanup(ctx, []int64{r.TargetID}); err != nil {
+		if _, err := store.RemoveFactsForGood(ctx, []int64{r.TargetID}, "user report"); err != nil {
 			return false, fmt.Errorf("delete fact %d: %w", r.TargetID, err)
 		}
 	case storage.ReportKindContradiction:

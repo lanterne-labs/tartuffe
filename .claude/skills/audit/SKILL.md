@@ -362,7 +362,7 @@ the merge commit is SUCCESS.
 
 Write one script in the audit folder that does, in this order: delete the bad
 facts (`printf 'y\n' | ./dm facts delete --ids ...`; their contradictions go
-with them), dismiss the false rows (`./dm contradictions dismiss --ids ...`,
+with them, and the facts are remembered in `removed_facts`: an extraction of their document does not store them again), dismiss the false rows (`./dm contradictions dismiss --ids ...`,
 which also stops their re-detection), run the repairs with `--apply`, delete
 the entities the user agreed are out of scope, then `./dm persons rescore`
 (retry it: the public URL resets connections and deadlocks with the worker).

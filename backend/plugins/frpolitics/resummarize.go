@@ -71,7 +71,9 @@ func ResummarizeBallots(ctx context.Context, storer *storage.PostgresStorer, sto
 	var res ResummarizeResult
 	var amendments []Law
 	for _, law := range laws {
-		if t := ClassifyScrutinObject(law.Title); t == ObjectAmendement || t == ObjectSousAmendement {
+		// An article ballot too: its bill summary may restate the title
+		// (« Article premier de la proposition de loi qui vise à… »).
+		if t := ClassifyScrutinObject(law.Title); t == ObjectAmendement || t == ObjectSousAmendement || t == ObjectArticle {
 			amendments = append(amendments, law)
 		}
 	}
@@ -88,7 +90,11 @@ func ResummarizeBallots(ctx context.Context, storer *storage.PostgresStorer, sto
 	counts := map[string]int{}
 	for _, law := range amendments {
 		for _, old := range variants[law.Key] {
-			if !staleAmendmentSummary(old) {
+			if ClassifyScrutinObject(law.Title) == ObjectArticle {
+				if !titleAsStatement(old) {
+					continue
+				}
+			} else if !staleAmendmentSummary(old) {
 				continue
 			}
 			n, err := store.BallotsQuoting(ctx, law.Key, summaryQuote(old))

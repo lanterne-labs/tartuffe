@@ -1017,7 +1017,17 @@ func (sm *StanceManager) recordStanceContradictions(
 		// stance OF THIS PERSON, so the person-scoped fast path in storage
 		// always sets bundle_stance_id directly.
 		if rs, ok := sm.storer.(RestatementStorer); ok {
-			if restated, _ := RestatesExisting(ctx, rs, sm.restate, "", personID, factID, c.KeyFactID, c.Reason); restated > 0 {
+			restated, err := RestatesExisting(ctx, rs, sm.restate, "", personID, factID, c.KeyFactID, c.Reason)
+			if err != nil {
+				// Not recorded: the pair is queued for the detector, which
+				// judges it and checks the restatement again.
+				log.Warn().Err(err).Int64("stance_id", stanceID).Msg("Restatement check failed; the pair is queued for the detector")
+				if qErr := sm.storer.EnqueueFactPair(ctx, personID, factID, c.KeyFactID, "stance:restatement-unchecked"); qErr != nil {
+					log.Error().Err(qErr).Int64("fact_a", factID).Int64("fact_b", c.KeyFactID).Msg("Failed to queue the pair whose restatement check failed")
+				}
+				continue
+			}
+			if restated > 0 {
 				continue
 			}
 		}

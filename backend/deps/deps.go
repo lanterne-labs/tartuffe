@@ -96,6 +96,9 @@ type Deps struct {
 // New returns a container bound to the given storer.
 func New(storer *storage.PostgresStorer) *Deps {
 	d := &Deps{Storer: storer}
+	// No inserter of the process stores again a fact a person removed from
+	// its source (storage.RemoveFactsForGood).
+	core.UseRemovedFacts(storer.WasRemoved)
 	// Every inserter of the process searches the exact day of a fact it
 	// stores with a year or a month (backend/statementday).
 	core.UseStatementDays(statementday.NewSharpener(storer, d.StatementDayFinder))

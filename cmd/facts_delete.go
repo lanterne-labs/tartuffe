@@ -123,8 +123,9 @@ func deleteFacts(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// deleteFactsByID deletes the facts given and cleans up after them
-// (DeleteFactsAndCleanup).
+// deleteFactsByID deletes the facts given, cleans up after them and
+// remembers them, so an extraction of their document does not store them
+// again (RemoveFactsForGood).
 func deleteFactsByID(ctx context.Context, ids []int64, skipConfirm bool) error {
 	if err := godotenv.Load(); err != nil {
 		log.Debug().Msg(".env file not found or error loading")
@@ -145,7 +146,7 @@ func deleteFactsByID(ctx context.Context, ids []int64, skipConfirm bool) error {
 			return nil
 		}
 	}
-	res, err := storer.DeleteFactsAndCleanup(ctx, ids)
+	res, err := storer.RemoveFactsForGood(ctx, ids, "dm facts delete --ids")
 	if err != nil {
 		return fmt.Errorf("failed to delete facts: %w", err)
 	}

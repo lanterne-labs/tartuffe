@@ -18,9 +18,9 @@ import (
 type Storer interface {
 	GetFactByID(ctx context.Context, factID int64) (*core.FactForDedup, error)
 	GetFactSourceURLs(ctx context.Context, factID int64) ([]string, error)
-	// DeleteFactsAndCleanup removes the facts with their contradictions and
+	// RemoveFactsForGood removes the facts with their contradictions and
 	// recomputes the scores they counted in.
-	DeleteFactsAndCleanup(ctx context.Context, factIDs []int64) (storage.FactDeletionCleanupResult, error)
+	RemoveFactsForGood(ctx context.Context, factIDs []int64, reason string) (storage.FactDeletionCleanupResult, error)
 
 	GetContradictionByID(ctx context.Context, id int64) (*storage.ContradictionWithFacts, error)
 	// DismissContradictionAsFalsePositive removes the contradiction and
@@ -160,7 +160,7 @@ func triageFactComplaint(ctx context.Context, store Storer, tally TallyDeleter, 
 
 	switch verdict.Verdict {
 	case VerdictDeleteTarget:
-		if _, err := store.DeleteFactsAndCleanup(ctx, []int64{c.FactID}); err != nil {
+		if _, err := store.RemoveFactsForGood(ctx, []int64{c.FactID}, "complaint"); err != nil {
 			out.Err = fmt.Errorf("delete fact %d: %w", c.FactID, err)
 			return out
 		}
