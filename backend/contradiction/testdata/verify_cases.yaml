@@ -1411,3 +1411,47 @@ cases:
     date_a: "2025-10-10"
     date_b: "2025-08-30"
 
+  # ---- Audit of 2026-11-18.
+  # ---- Two outlets' summaries of one programme (second time: 2472 on 2026-11-16, bd mirror-ds6.63).
+  - name: "FP_2479_dupont_aignan_two_outlets_one_programme"
+    fact_a: "Nicolas Dupont-Aignan s'engage à maintenir l'âge minimum de départ à la retraite et la durée de cotisations aux niveaux actuels."
+    fact_b: "Nicolas Dupont-Aignan est favorable au rétablissement de la retraite à taux plein à 60 ans avec 37,5 annuités."
+    claimed_reason: "Il s'était engagé à maintenir l'âge de départ et la durée de cotisation actuels, puis soutient un retour à 60 ans et 37,5 annuités."
+    expect: drop
+    bucket: third_party_narrative
+    notes: "A is Ouest-France's summary of his 2022 programme (22 Dec 2021), B is Le Parisien's (7 Mar 2022); no words of his on either side. His 2022 programme kept 62 (BFM, Moneyvox, Previssima): Le Parisien erred. Prod 2472 and 2479."
+    date_a: "2021-12-22"
+    date_b: "2022-03-07"
+
+  # ---- A pledge not to criticise one's rivals, and a measured reservation on the President's trip.
+  - name: "FP_2474_philippe_pledge_about_rivals"
+    fact_a: "Édouard Philippe a affirmé qu'il veillera à ne jamais critiquer les autres représentants du bloc central."
+    fact_b: "Édouard Philippe a jugé sur France 2 que le déplacement d'Emmanuel Macron dans le Golfe au lendemain des manifestations \"n'était pas la plus opportune\" des décisions."
+    claimed_reason: "Après avoir promis de ne jamais critiquer les autres représentants du bloc central, Philippe critique publiquement la décision d'Emmanuel Macron de se rendre dans le Golfe."
+    expect: drop
+    bucket: symbolic_counter_gesture
+    notes: "The pledge (Le Figaro, 24 Aug 2026) answers a question on the rassemblement of the bloc central's candidates: it is about his rivals. Macron is not one, and the remark is a reservation, not an attack. Prod 2474."
+    date_a: "2026-08-24"
+    date_b: "2026-10-29"
+
+  # ---- Two purposes given for one candidacy.
+  - name: "FP_2481_branco_two_purposes_one_candidacy"
+    fact_a: "Juan Branco a déclaré que sa candidature n'a pas d'autre objectif que de tester les limites du système et d'aller les chercher sur son propre terrain."
+    fact_b: "Juan Branco déclare que son parcours à travers le pays doit l'amener à la Présidence de la République."
+    claimed_reason: "Il affirme que son parcours doit le mener à l'Élysée, alors qu'il disait que sa candidature n'avait pas d'autre but que de tester les limites du système."
+    expect: drop
+    bucket: same_direction
+    notes: "Both are the same presidential run, seven weeks apart; in the speech of March he goes on « nous allons voir jusqu'où ils vont nous laisser aller ». Prod 2481."
+    date_a: "2025-03-19"
+    date_b: "2025-01-26"
+
+  # ---- Two statements that both leave the decision open.
+  - name: "FP_2482_le_pen_both_undecided"
+    fact_a: "Marine Le Pen a déclaré qu'il faudrait vraiment des circonstances exceptionnelles pour qu'elle se représente à une quatrième élection présidentielle."
+    fact_b: "Marine Le Pen a affirmé que, si elle décide d'être à nouveau candidate à l'élection présidentielle de 2027, ce sera pour présider le pays et pas pour le gouverner, tout en précisant qu'elle n'a pas encore pris cette décision."
+    claimed_reason: "Elle disait en septembre 2022 qu'il faudrait des circonstances exceptionnelles pour se représenter, puis affiche en novembre 2022 son ambition d'aller à l'Élysée en 2027, sans expliquer ce changement."
+    expect: drop
+    bucket: date_only_no_commitment
+    notes: "Neither is a pledge; the second says the decision is not taken. Prod 2482."
+    date_a: "2022-09-17"
+    date_b: "2022-11-12"
