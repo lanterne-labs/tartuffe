@@ -164,6 +164,11 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 	summaries := make(map[string]LawSummary)
 	for key, out := range rawResult {
 		confidence := out.Confidence
+		if titleAsStatement(out.SimpleStatement) {
+			log.Warn().Str("law_key", key).Str("statement", out.SimpleStatement).
+				Msg("frpolitics: the law statement restates the scrutin's title; skipping the law")
+			confidence = 0
+		}
 		if metaStatement(out.SimpleStatement) {
 			// The statement is embedded in every ballot of the law: a remark
 			// about what the model could not determine must not be. The law
@@ -185,6 +190,19 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 // metaStatementRe matches a statement that talks about the summarization
 // (what the title does or does not say) instead of the law.
 var metaStatementRe = regexp.MustCompile(`(?i)d[ée]terminable|à partir du titre|(im)?possible de d[ée]terminer|le titre ne (permet|précise|dit)|contenu (précis|exact) (de l'article|du texte|de l'amendement) n'est pas`)
+
+// titleAsStatementRe matches a statement that is the scrutin's title, not what
+// the law does: it starts with the article or the amendment voted, or names
+// an article "of the bill" (prod, 2026-11-18: « Article premier de la
+// proposition de loi qui vise à… » on every ballot of a scrutin; 17-3399:
+// « Vise à supprimer l'article liminaire du projet de loi… »). An article of
+// a code or of the Constitution is what a law changes and stays.
+var titleAsStatementRe = regexp.MustCompile(`(?i)^\s*(l['’])?(article|amendement|sous-amendement)\b|\b(article|alinéa|amendement)\b[^.«»]{0,80}\b(du|de la|de ce|de cette) (projet|proposition) de (loi|résolution)`)
+
+// titleAsStatement reports whether statement restates the scrutin's title.
+func titleAsStatement(statement string) bool {
+	return titleAsStatementRe.MatchString(statement)
+}
 
 // metaStatement reports whether statement talks about the title or the
 // summarization instead of the law.

@@ -88,3 +88,20 @@ func TestSummarizeLawsSharesOneTitle(t *testing.T) {
 		t.Errorf("the other bill keeps its own summary: %+v", got["17-3"])
 	}
 }
+
+// A statement that restates the scrutin's title is not what the law does.
+func TestTitleAsStatement(t *testing.T) {
+	for statement, want := range map[string]bool{
+		"Article premier de la proposition de loi qui vise à lutter contre la disparition des terres agricoles et à renforcer la régulation des prix du foncier agricole.": true,
+		"Vise à supprimer l'article liminaire du projet de loi de financement de la sécurité sociale pour 2026":                                                            true,
+		"L'amendement n° 12 restreint le champ du texte":                                             true,
+		"Inscrit à l'article 34 de la Constitution la liberté de recourir à l'IVG":                   false,
+		"Renforce la lutte contre la disparition des terres agricoles et régule les prix du foncier": false,
+		"Adopte le projet de loi de finances pour 2027, qui réduit le déficit public":                false,
+		"Abroge l'article L. 3262-5 du code du travail sur la validité des titres-restaurant":        false,
+	} {
+		if got := titleAsStatement(statement); got != want {
+			t.Errorf("titleAsStatement(%q) = %v, want %v", statement, got, want)
+		}
+	}
+}

@@ -35,7 +35,7 @@ func (m *memReports) GetFactByID(_ context.Context, id int64) (*core.FactForDedu
 func (m *memReports) GetFactSourceURLs(context.Context, int64) ([]string, error) {
 	return []string{"http://ex/1"}, nil
 }
-func (m *memReports) DeleteFactsAndCleanup(_ context.Context, ids []int64) (storage.FactDeletionCleanupResult, error) {
+func (m *memReports) RemoveFactsForGood(_ context.Context, ids []int64, _ string) (storage.FactDeletionCleanupResult, error) {
 	m.deletedFacts = append(m.deletedFacts, ids...)
 	m.factGone = true
 	return storage.FactDeletionCleanupResult{FactsDeleted: len(ids)}, nil

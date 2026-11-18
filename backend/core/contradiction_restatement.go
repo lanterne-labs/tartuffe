@@ -155,8 +155,11 @@ func (j *RestatementJudge) SameContradiction(ctx context.Context, person string,
 // RestatesExisting reports whether the pair (factA, factB) of the person
 // restates one of their recorded contradictions; when it does, the pair is
 // recorded as judged and the caller does not record it. It returns the id it
-// restates (0: none). A failed judge call answers no (logged): a duplicate
-// counted is better than a contradiction lost.
+// restates (0: none). A failed judge call is an error: the caller records
+// neither the contradiction nor a verdict for the pair, so the pair is judged
+// again at the next pass (prod 2473 and 2475, 2026-11-18: one event stored
+// as two facts gave two rows the judge calls the same; a failed call used to
+// answer "not a restatement").
 func RestatesExisting(ctx context.Context, storer RestatementStorer, judge *RestatementJudge, person string, personID, factA, factB int64, reason string) (int64, error) {
 	if judge == nil || storer == nil {
 		return 0, nil
@@ -168,8 +171,7 @@ func RestatesExisting(ctx context.Context, storer RestatementStorer, judge *Rest
 	for _, c := range cands {
 		same, why, err := judge.SameContradiction(ctx, person, c)
 		if err != nil {
-			log.Warn().Err(err).Int64("fact_a", factA).Int64("fact_b", factB).Int64("candidate", c.ID).Msg("restatement check failed; the contradiction is recorded")
-			return 0, nil
+			return 0, fmt.Errorf("restatement check of facts %d and %d against contradiction %d: %w", factA, factB, c.ID, err)
 		}
 		if !same {
 			continue

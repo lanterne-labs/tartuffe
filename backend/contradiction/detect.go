@@ -780,7 +780,17 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 					if !opts.DryRun {
 						// A verdict already paid for is recorded even when the deadline
 						// passed meanwhile (the write must not fail on the cancelled ctx).
-						if restated, _ := core.RestatesExisting(context.WithoutCancel(ctx), storer, restate, pp.personName, pp.personID, batch[j].factAID, batch[j].factBID, result.Reason); restated > 0 {
+						restated, rErr := core.RestatesExisting(context.WithoutCancel(ctx), storer, restate, pp.personName, pp.personID, batch[j].factAID, batch[j].factBID, result.Reason)
+						if rErr != nil {
+							// Neither recorded nor judged: the pair's verdict is
+							// dropped, so the next pass judges it again.
+							log.Warn().Err(rErr).Str("person", pp.personName).Msg("Restatement check failed; the pair is left to the next pass")
+							pairResults = pairResults[:len(pairResults)-1]
+							totalContradictions--
+							personContradictions--
+							continue
+						}
+						if restated > 0 {
 							continue
 						}
 						contradictionID, needsBundler, err := storer.RecordContradictionImmediate(context.WithoutCancel(ctx), pp.personID, batch[j].factAID, batch[j].factBID, result.Reason, result.ReasonEn)

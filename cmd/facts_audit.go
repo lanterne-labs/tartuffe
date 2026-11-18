@@ -313,7 +313,7 @@ func runFactsAudit(cmd *cobra.Command, args []string) (runErr error) {
 		}
 	}
 
-	cleanup, err := storer.DeleteFactsAndCleanup(ctx, deleteIDs)
+	cleanup, err := storer.RemoveFactsForGood(ctx, deleteIDs, "dm facts audit")
 	if err != nil {
 		return fmt.Errorf("failed to apply deletions: %w", err)
 	}

@@ -323,6 +323,9 @@ func (fi *FactInserter) insertOne(ctx context.Context, i, n int, fact StoreFactI
 			Msg("Skipping fact: no date (neither the statement's nor its source's)")
 		return factOutcome{skipped: true}, nil
 	}
+	if wasRemoved(ctx, fact) {
+		return factOutcome{skipped: true}, nil
+	}
 	factID, personID, err := fi.insertSingleFact(ctx, fact)
 	if err == nil {
 		fi.findStatementDay(ctx, factID, personID, fact)
