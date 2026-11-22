@@ -55,6 +55,7 @@ type failoverEntry struct {
 // at the URL it was redirected to (RedirectedError).
 func (e *failoverExtractor) ExtractContent(url string) (*ExtractedContent, error) {
 	var failures []string
+	var quota error
 	asked := url
 	for i, n := range e.extractors {
 		result, err := n.ext.ExtractContent(asked)
@@ -67,11 +68,20 @@ func (e *failoverExtractor) ExtractContent(url string) (*ExtractedContent, error
 			return result, nil
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", n.name, err))
+		if errors.Is(err, ErrQuota) {
+			quota = ErrQuota
+		}
 		var re *RedirectedError
 		if errors.As(err, &re) && re.URL != "" {
 			asked = re.URL
 		}
 		log.Warn().Err(err).Str("url", url).Str("extractor", n.name).Int("attempt", i+1).Int("remaining", len(e.extractors)-i-1).Msg("Failover extractor: attempt failed, trying next")
+	}
+	if quota != nil {
+		// The page was not read because a reader is out of credit: the caller
+		// tells it from a page no reader can read.
+		return nil, fmt.Errorf("%w: failover extractor: all %d extractors failed for %s — %s",
+			quota, len(e.extractors), url, strings.Join(failures, " | "))
 	}
 	return nil, fmt.Errorf("failover extractor: all %d extractors failed for %s — %s",
 		len(e.extractors), url, strings.Join(failures, " | "))

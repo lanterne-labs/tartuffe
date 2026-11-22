@@ -2,6 +2,7 @@ package extractor
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,4 +137,25 @@ func TestFailoverExtractor_NoExtractorsIsError(t *testing.T) {
 
 	_, err = newFailoverExtractor(failoverEntry{Name: "n", Extractor: nil})
 	require.Error(t, err, "all-nil entries should error since there's nothing to try")
+}
+
+// A reader out of credit is told from a page no reader can read: the caller
+// keeps the page to try again.
+func TestFailoverExtractor_ReaderOutOfCredit(t *testing.T) {
+	primary := &stubExtractor{name: "primary", err: errors.New("HTTP 403")}
+	backup := &stubExtractor{name: "backup", err: fmt.Errorf("failed to submit scrape job: %w: API returned status 402", ErrQuota)}
+	failover, err := newFailoverExtractor(
+		failoverEntry{Name: "primary", Extractor: primary},
+		failoverEntry{Name: "backup", Extractor: backup},
+	)
+	require.NoError(t, err)
+
+	_, err = failover.ExtractContent("https://example.org/a")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrQuota)
+
+	backup.err = errors.New("job failed")
+	_, err = failover.ExtractContent("https://example.org/a")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrQuota)
 }

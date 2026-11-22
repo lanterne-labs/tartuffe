@@ -163,6 +163,9 @@ func (e *WebcrawlerAPIExtractor) submitScrapeJob(url string) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusPaymentRequired {
+		return "", fmt.Errorf("%w: API returned status %d", ErrQuota, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
