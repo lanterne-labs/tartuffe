@@ -426,13 +426,6 @@
 	function pickRow(slot: number) {
 		picked = picked === slot ? null : slot;
 	}
-	// The consistency score of a candidate, from its card; none for the
-	// blank or a card without one.
-	function scoreOf(slot: number): number | null {
-		const s = slot === BLANK ? undefined : cardOf(slot)?.honesty_score;
-		// The cards carry the score as the site stores it (0 to 1).
-		return typeof s === 'number' && Number.isFinite(s) ? Math.round(s * 100) : null;
-	}
 	// The sentence under the ballot that says where the vote stands.
 	let statusLine = $derived.by(() => {
 		const s = ballot.state;
@@ -835,6 +828,7 @@
 				{#each counts as { kind, list } (kind)}
 					<div class="count" class:count--off={countShown !== kind}>
 						<h3>{tr(kind === 'ranking' ? 'poll.tab.ranking' : 'poll.tab.first.short', currentLang)}</h3>
+						<p class="count-note">{tr(kind === 'ranking' ? 'poll.tab.ranking.note' : 'poll.tab.first.note', currentLang)}</p>
 						<ol class="vote-list">
 							{#each list as o, i (o.slot)}
 								{@const pslug = o.blank ? undefined : (cardOf(o.slot)?.person_slug ?? cardOf(o.slot)?.person_id)}
@@ -861,7 +855,12 @@
 									{#if o.blank}
 										<span class="photo photo--empty" aria-hidden="true"></span>
 									{:else}
-										<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} size="xs" image={imageOf(o.slot)} initial={nameOf(o.slot).charAt(0).toUpperCase()} />
+										<!-- The portrait alone: a score beside a result reads as the result. -->
+										{#if imageOf(o.slot)}
+											<img class="photo" src={imageOf(o.slot)} alt="" loading="lazy" />
+										{:else}
+											<span class="photo photo--initial" aria-hidden="true">{nameOf(o.slot).charAt(0).toUpperCase()}</span>
+										{/if}
 									{/if}
 									<span class="who-text">
 										{#if pslug !== undefined}
@@ -1768,6 +1767,20 @@
 		border-radius: 50%;
 		object-fit: cover;
 		border: 2px solid var(--glass-border);
+	}
+	.photo--initial {
+		display: grid;
+		place-items: center;
+		background: var(--glass-bg, rgba(255, 255, 255, 0.06));
+		font-weight: 600;
+		font-size: 0.95rem;
+	}
+	.count-note {
+		margin: 0.1rem 0 0.5rem;
+		font-size: 0.8rem;
+		line-height: 1.3;
+		opacity: 0.75;
+		min-height: 2.1rem;
 	}
 	.photo--empty {
 		display: grid;
