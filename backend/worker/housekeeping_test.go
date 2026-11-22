@@ -154,3 +154,13 @@ func TestWorkerIdleRunsTheHousekeeping(t *testing.T) {
 	assert.Len(t, runner.ran, 1, "the task ran before the housekeeping")
 	assert.Equal(t, 7, idle.facts, "the facts of the done task were reported")
 }
+
+// A pass the LLM left within seconds did nothing: it is not a pass the tasks
+// wait a MaintenanceEvery after (2026-11-18 to 11-21: every pass was cut
+// within 100 seconds and none worked for four days).
+func TestPassWorked(t *testing.T) {
+	assert.False(t, passWorked(90*time.Millisecond), "cut at its first call")
+	assert.False(t, passWorked(100*time.Second), "cut within two minutes")
+	assert.True(t, passWorked(minPassWork), "worked for minPassWork")
+	assert.True(t, passWorked(2*time.Hour), "a pass of two hours cut by the limit")
+}

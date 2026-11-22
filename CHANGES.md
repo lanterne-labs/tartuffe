@@ -2,6 +2,16 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-22: Four days without a maintenance pass, searches that ignored their dates, pages lost to a reader out of credit
+
+- **State found (the pass).** From 18 to 21 November the worker stored 57,000 facts and no maintenance pass worked: no detection over them, no stance summary (655 new stances of the candidates carried their first fact as a summary), no explanation, no podium snapshot. The tasks used every seat to its limit; the pass started each time the worker waited for a reset, was cut within seconds (0.06 s to 100 s), and that cut was recorded as a pass, which gave the tasks a new `MAINTENANCE_EVERY_HOURS`.
+- **What (the pass).** A pass the LLM left before 30 minutes of work (`minPassWork`) is not recorded: it stays due and goes before the tasks at the reset. One that worked longer is still recorded as cut, as since 14 November.
+- **State found (the search).** On 21 November at 09:58 UTC the first search provider ran out of credit; the next one does not apply a date range to old news and answered 3,767 windows of 2016 to 2019 with up to 200 current articles each (397,000 results). The windows were logged as searched.
+- **What (the search).** The news plugin drops a result dated outside its window (seven days of slack); a search with three dated results or more and none in the window did not apply the range: its window is not logged and the task waits, as for a quota (`resultsInWindow`).
+- **State found (the pages).** The fallback page reader answered 402 (no credit) from 19 November 23:00 UTC. A page the local fetch cannot read (403, a text too thin) was then dropped and its window logged: 2,300 pages until the search broke, 15,766 failed reads on the 21st.
+- **What (the pages).** `extractor.ErrQuota` marks a page a reader refused for its credit; the news plugin stores the pages it read, leaves the window open and makes the task wait. Without credit on that reader the news tasks wait: add credit, or remove its key to accept the loss of the pages the local fetch cannot read.
+- **Lesson.** A fallback hides the failure of what it replaces: each of the three (the pass cut and recorded, the second search provider, the second page reader) kept the worker "running" while it produced nothing or the wrong thing. A fallback that cannot do the job must stop the work, not finish it badly.
+
 ## 2026-11-18: The digest does not report a day the seats cut short
 
 - **State found.** The digest of 18 November said « le flux du jour n'a pas tourné ; 713 erreurs dans les logs » on a day with 3,846 facts and 8 contradictions. The feed had started at 03:00 UTC, waited for the one seat with room, and ended at 07:03, three minutes after the digest. The errors were the lines every document and task logs when no seat answers.

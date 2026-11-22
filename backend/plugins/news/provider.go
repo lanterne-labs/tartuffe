@@ -259,6 +259,20 @@ func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts
 			fmt.Errorf("news search failed for %s: %w", target.Name, err))
 	}
 
+	// A result dated outside the window is not of the period asked; a search
+	// whose dated results are all outside did not apply the range, and its
+	// window is not logged as searched: the task waits for a provider that
+	// applies it.
+	found := len(newsResults)
+	newsResults, ignored := resultsInWindow(newsResults, opts.DateFrom, opts.DateTo)
+	if ignored {
+		return result, p.extractLeftovers(ctx, target, affiliatedParties, opts, result,
+			fmt.Errorf("news search for %s: %w: the %d results are all dated outside the window asked", target.Name, search.ErrQuota, found))
+	}
+	if dropped := found - len(newsResults); dropped > 0 {
+		log.Info().Str("target", target.Name).Int("dropped", dropped).Msg("news: results dated outside the window dropped")
+	}
+
 	result.ArticlesFound = len(newsResults)
 	log.Info().
 		Str("target", target.Name).
@@ -596,6 +610,7 @@ func (p *Provider) extractAndInsertFromArticles(
 
 	var docs []core.SourceDocument
 	var nothingToExtract []string
+	var readerOut error // a page the fallback reader refused for its credit
 	for i, article := range articlesToProcess {
 		content := extractedContents[i]
 		if final, ok := redirected[i]; ok {
@@ -607,6 +622,9 @@ func (p *Provider) extractAndInsertFromArticles(
 			article.Link = final
 		}
 		if extractErr := extractionErrors[i]; extractErr != nil {
+			if errors.Is(extractErr, extractor.ErrQuota) {
+				readerOut = extractErr
+			}
 			log.Error().Err(extractErr).Str("url", article.Link).Msg("Failed to extract content")
 			result.Errors = append(result.Errors, extractErr)
 			metrics.IncrementNewsArticles("error")
@@ -652,6 +670,15 @@ func (p *Provider) extractAndInsertFromArticles(
 		if err := p.Storer.MarkDocumentExtracted(ctx, ids[url], 0); err != nil {
 			return err
 		}
+	}
+	if readerOut != nil {
+		// The pages the local fetch cannot read went to a reader that is out
+		// of credit: they are not stored, so a window logged as fetched would
+		// lose them for good (2026-11-21: 15 766 pages in a day). The window
+		// stays open and the task waits, as for a search quota; the pages
+		// read are stored and are not read again.
+		return errors.Join(fmt.Errorf("%w: %w", search.ErrQuota, readerOut),
+			p.extractStoredDocuments(ctx, target, affiliatedParties, opts, result))
 	}
 	result.fetched = true
 

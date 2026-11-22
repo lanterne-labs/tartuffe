@@ -52,6 +52,10 @@ const (
 	// is cut into passes of about 2 h, so the feed and the tasks run between
 	// them.
 	detectBudget = 2000
+	// minPassWork is how long a pass must have worked before the LLM left it
+	// for the tasks to get their MaintenanceEvery: a shorter one did nothing
+	// to speak of and stays due.
+	minPassWork = 30 * time.Minute
 	// auditCadence is how often the contradiction auditor re-judges the
 	// stored contradictions.
 	auditCadence = 5 * 24 * time.Hour
@@ -478,8 +482,20 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) (err er
 	// MaintenanceEvery before it holds them off again. Without the record the
 	// pass stayed due and urgent: from 2026-11-11 to 11-14 it started nine
 	// times, each time ahead of the tasks, and never ended.
+	//
+	// A pass the LLM left before minPassWork is not recorded: it did nothing,
+	// and its record gave the tasks a new MaintenanceEvery. From 2026-11-18 to
+	// 11-21 the tasks used every seat to its limit, the pass started each
+	// time the worker waited for a reset, was cut within seconds, and no pass
+	// worked for four days and 57 000 new facts: no detection, no stance
+	// summary. Unrecorded, it is due at the reset and goes before the tasks.
 	defer func() {
 		if err == nil || !errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
+			return
+		}
+		if elapsed := h.now().Sub(start); !passWorked(elapsed) {
+			log.Warn().Err(err).Dur("elapsed", elapsed.Round(time.Second)).
+				Msg("Maintenance pass stopped: LLM unavailable before it could work; it stays due")
 			return
 		}
 		rows := passRows(h.now().Sub(start), true, since.IsZero(), since)
@@ -650,6 +666,10 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) (err er
 	}
 	return errors.Join(errs...)
 }
+
+// passWorked reports whether a pass the LLM left after elapsed worked long
+// enough to count as a pass (minPassWork).
+func passWorked(elapsed time.Duration) bool { return elapsed >= minPassWork }
 
 // passRows is what a pass records at its end. A cut pass (the detection at
 // detectBudget, or the LLM gone) names what the next one goes on with:
