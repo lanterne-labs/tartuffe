@@ -158,3 +158,85 @@ func TestListLabelSimilarStancePairs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][2]int64{{a, b}}, pairs)
 }
+
+// ClosestUnjudgedFacts takes the limit facts of the given stances nearest to
+// the fact, then leaves out those whose pair with it has a verdict: a fact
+// whose nearest pairs are all judged gets none, and the facts further away
+// do not take their place. Duplicate-marked facts, the fact itself and the
+// stances not asked for are out.
+func TestClosestUnjudgedFacts(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_document_facts, stance_documents, fact_pair_checks RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+
+	personID, _, err := storer.AddPerson(ctx, "merge person")
+	require.NoError(t, err)
+	fact := func(text string, emb []float32) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(emb)).Scan(&id))
+		return id
+	}
+	stance := func(label string, factIDs ...int64) int64 {
+		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
+			PersonID: personID, ClusterLabel: label, ClusterEmbedding: mockEmbedding(), Summary: "s " + label,
+			KeyFactIDs: factIDs, FactCount: len(factIDs),
+		})
+		require.NoError(t, err)
+		for _, f := range factIDs {
+			require.NoError(t, storer.AddFactToStance(ctx, id, f))
+		}
+		return id
+	}
+	ids := func(facts []core.StanceFactInfo) []int64 {
+		out := make([]int64, 0, len(facts))
+		for _, f := range facts {
+			out = append(out, f.ID)
+		}
+		return out
+	}
+
+	absorbed := fact("absorbed", makeUnitEmbedding(0))
+	sibling := fact("sibling of the absorbed fact", makeMixedEmbedding(0, 1, 0.999, 0.001))
+	nearest := fact("nearest", makeMixedEmbedding(0, 1, 0.99, 0.01))
+	dup := fact("dup of nearest", makeMixedEmbedding(0, 1, 0.98, 0.02))
+	near := fact("near", makeMixedEmbedding(0, 1, 0.9, 0.1))
+	mid := fact("mid", makeMixedEmbedding(0, 1, 0.6, 0.4))
+	far := fact("far", makeUnitEmbedding(5))
+	src := stance("source", absorbed, sibling)
+	dst := stance("destination", far, mid, nearest, dup)
+	other := stance("other source", near)
+	_, err = storer.pool.Exec(ctx,
+		"INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES ($1, $2, 'duplicate')", nearest, dup)
+	require.NoError(t, err)
+
+	got, err := storer.ClosestUnjudgedFacts(ctx, absorbed, []int64{dst, other}, 3)
+	require.NoError(t, err)
+	require.Equal(t, []int64{nearest, near, mid}, ids(got), "the three nearest of the other stances, nearest first")
+	require.Equal(t, "nearest", got[0].NormalizedFactText)
+
+	// The verdict on the pairs with the two nearest is known, in either order
+	// of the ids: the third alone is left, and far does not come in.
+	require.NoError(t, storer.RecordJudgedPairs(ctx, personID, "hash", []core.JudgedPair{
+		{FactAID: absorbed, FactBID: nearest}, {FactAID: near, FactBID: absorbed, Contradiction: true},
+	}))
+	got, err = storer.ClosestUnjudgedFacts(ctx, absorbed, []int64{dst, other}, 3)
+	require.NoError(t, err)
+	require.Equal(t, []int64{mid}, ids(got))
+
+	require.NoError(t, storer.RecordJudgedPairs(ctx, personID, "hash", []core.JudgedPair{{FactAID: absorbed, FactBID: mid}}))
+	got, err = storer.ClosestUnjudgedFacts(ctx, absorbed, []int64{dst, other}, 3)
+	require.NoError(t, err)
+	require.Empty(t, got, "every near pair has its verdict")
+
+	// The fact's own stance is asked for: the fact itself is never returned.
+	got, err = storer.ClosestUnjudgedFacts(ctx, absorbed, []int64{src}, 3)
+	require.NoError(t, err)
+	require.Equal(t, []int64{sibling}, ids(got))
+
+	got, err = storer.ClosestUnjudgedFacts(ctx, absorbed, nil, 3)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}

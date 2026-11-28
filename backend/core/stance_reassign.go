@@ -127,7 +127,8 @@ func ReassignSingletonsForPerson(ctx context.Context, storer StanceReassignStore
 		// The target keeps its label and summary until RefreshStanceMetadata
 		// rewrites them from the merged fact set inside applyMergeSubgroup.
 		sub := MergeSubgroup{StanceIDs: []int64{s.ID, target.ID}, Label: target.ClusterLabel, Summary: target.Summary}
-		merged, contradictions, _, err := applyMergeSubgroup(ctx, storer, sm, p.ID, currentByID, sub)
+		out, err := applyMergeSubgroup(ctx, storer, sm, p.ID, currentByID, sub, nil)
+		merged, contradictions := out.merged, out.contradictions
 		if merged == 0 {
 			log.Warn().Err(err).Str("person", p.Name).Int64("stance_id", s.ID).Int64("target_id", target.ID).
 				Msg("Singleton re-assignment: merge failed; stance stays")
