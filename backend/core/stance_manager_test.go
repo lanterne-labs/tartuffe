@@ -150,6 +150,31 @@ func (m *mockStanceStorer) GetClosestFactsForStance(ctx context.Context, stanceI
 	return facts, nil
 }
 
+// ClosestUnjudgedFacts takes the first limit facts of the stances as the
+// nearest, and leaves out those RecordJudgedPairs got a verdict for.
+func (m *mockStanceStorer) ClosestUnjudgedFacts(ctx context.Context, factID int64, stanceIDs []int64, limit int) ([]StanceFactInfo, error) {
+	judged := map[[2]int64]bool{}
+	for _, p := range m.judged {
+		judged[[2]int64{min(p.FactAID, p.FactBID), max(p.FactAID, p.FactBID)}] = true
+	}
+	var out []StanceFactInfo
+	near := 0
+	for _, stanceID := range stanceIDs {
+		for _, f := range m.facts[stanceID] {
+			if f.ID == factID {
+				continue
+			}
+			if near++; near > limit {
+				return out, nil
+			}
+			if !judged[[2]int64{min(f.ID, factID), max(f.ID, factID)}] {
+				out = append(out, f)
+			}
+		}
+	}
+	return out, nil
+}
+
 // unsummarized, when set, is what GetUnsummarizedFactsForStance returns for
 // every stance; nil means "all facts are new" (never summarized).
 func (m *mockStanceStorer) GetUnsummarizedFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {

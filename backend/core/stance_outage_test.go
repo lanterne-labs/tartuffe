@@ -268,7 +268,8 @@ func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
 		storer := newStorer()
 		sm, _ := newOutageManager(t, storer, answers(map[string]any{verifyPrompt: nil}))
 		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
-		merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		out, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil)
+		merged, n := out.merged, out.contradictions
 		if !errors.Is(err, llm.ErrUnavailable) {
 			t.Fatalf("err = %v, want ErrUnavailable", err)
 		}
@@ -281,7 +282,8 @@ func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
 		storer := newStorer()
 		sm, _ := newOutageManager(t, storer, answers(map[string]any{analyzePrompt: "not json"}))
 		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
-		merged, n, failures, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		out, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil)
+		merged, n, failures := out.merged, out.contradictions, out.analyzeFailures
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,7 +304,8 @@ func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
 			return nil // the label + summary refresh
 		})
 		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
-		merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		out, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil)
+		merged, n := out.merged, out.contradictions
 		if !errors.Is(err, llm.ErrUnavailable) {
 			t.Fatalf("err = %v, want ErrUnavailable", err)
 		}
@@ -326,7 +329,8 @@ func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
 			return answers(nil)(prompt)
 		})
 		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
-		merged, n, failures, err := applyMergeSubgroup(ctx, storer, sm, 1, byID, sub)
+		out, err := applyMergeSubgroup(ctx, storer, sm, 1, byID, sub, nil)
+		merged, n, failures := out.merged, out.contradictions, out.analyzeFailures
 		if err == nil {
 			t.Fatal("want the error of the cut analysis")
 		}
@@ -342,7 +346,8 @@ func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
 		storer := newStorer()
 		sm, _ := newOutageManager(t, storer, answers(nil))
 		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
-		merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		out, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil)
+		merged, n := out.merged, out.contradictions
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -429,7 +434,8 @@ func TestApplyMergeSubgroup_RecordsOnlyWithinMergedStance(t *testing.T) {
 	}}))
 	byID := map[int64]StanceDocument{1: m.stances[1], 2: m.stances[2], 3: m.stances[3]}
 	sub := MergeSubgroup{StanceIDs: []int64{1, 2, 3}, Label: "retraites", Summary: "âge de départ"}
-	merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+	out, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil)
+	merged, n := out.merged, out.contradictions
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,5 +677,168 @@ func TestStanceMergeSweep_StopsAtCallBudget(t *testing.T) {
 	}
 	if stats.PersonsProcessed != 1 || stats.LLMCalls < 1 || len(storer.memos) != 1 || storer.memos[0] != 1 {
 		t.Errorf("stats=%+v memos=%v; want person 1 judged and memoized, person 2 left", stats, storer.memos)
+	}
+}
+
+// mergeStorer holds person 1's stance 1 with dstFacts facts (ids from 100)
+// and stance 2 with facts 20 and 21: stance 2 is the source of a merge.
+func mergeStorer(dstFacts int) *reassignStorer {
+	m := newMockStanceStorer()
+	m.stances[1] = StanceDocument{ID: 1, PersonID: 1, ClusterLabel: "retraites", Summary: "âge de départ", ClusterEmbedding: []float32{1, 0}, FactCount: dstFacts}
+	for i := range dstFacts {
+		m.facts[1] = append(m.facts[1], StanceFactInfo{ID: int64(100 + i), NormalizedFactText: fmt.Sprintf("déclare sur les retraites, fois %d", i)})
+	}
+	m.stances[2] = StanceDocument{ID: 2, PersonID: 1, ClusterLabel: "âge de la retraite", ClusterEmbedding: []float32{1, 0}, FactCount: 2}
+	m.facts[2] = []StanceFactInfo{{ID: 20, NormalizedFactText: "veut la retraite à 64 ans"}, {ID: 21, NormalizedFactText: "veut la retraite à 65 ans"}}
+	m.nextID = 3
+	return &reassignStorer{mockStanceStorer: m}
+}
+
+// noContradiction is the analysis that finds nothing.
+var noContradiction = map[string]any{"reasoning": "stub", "primary_verdict": "NEW_INFO", "contradictions": []any{}}
+
+// oneAnalysisSample makes an analysis one request for the test, whatever the
+// active routing: on an endpoint that votes, a stable verdict is two.
+func oneAnalysisSample(t *testing.T) {
+	t.Helper()
+	votes := AnalyzeVotes
+	AnalyzeVotes = 1
+	t.Cleanup(func() { AnalyzeVotes = votes })
+}
+
+// TestApplyMergeSubgroup_NearestFactsOneCall: an absorbed fact is analyzed
+// against the facts of the other stance nearest to it, in one call, whatever
+// the size of that stance, and the verdict on each pair compared is recorded.
+// Against every fact of the merged stance, the analysis of the maintenance
+// passes of 2026-11-26 made 29,000 calls and left no seat for the detection.
+func TestApplyMergeSubgroup_NearestFactsOneCall(t *testing.T) {
+	oneAnalysisSample(t)
+	storer := mergeStorer(3 * stanceCompareFacts)
+	sm, o := newOutageManager(t, storer, answers(map[string]any{analyzePrompt: noContradiction}))
+	byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+	sub := MergeSubgroup{StanceIDs: []int64{1, 2}, Label: "retraites", Summary: "âge de départ"}
+
+	out, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.merged != 1 || out.analyzed != 2 || out.cut {
+		t.Errorf("outcome = %+v, want the merge and 2 facts analyzed", out)
+	}
+	if n := o.count(analyzePrompt); n != 2 {
+		t.Errorf("analysis calls = %d, want 2: one per absorbed fact", n)
+	}
+	if len(storer.judged) != 2*stanceCompareFacts || storer.judgeHash != StanceJudgeHash() {
+		t.Fatalf("judged pairs = %d under %q, want %d under the stance judge", len(storer.judged), storer.judgeHash, 2*stanceCompareFacts)
+	}
+	for _, p := range storer.judged {
+		if p.Contradiction || (p.FactAID != 20 && p.FactAID != 21) || p.FactBID < 100 {
+			t.Fatalf("judged pair %+v, want an absorbed fact against a fact of the destination, no contradiction", p)
+		}
+	}
+}
+
+// TestApplyMergeSubgroup_ContradictionVerdict: the pair of a contradiction
+// the merge stored is recorded as one; when the merge does not commit (the
+// verifier is out), the pair gets no verdict and is judged again.
+func TestApplyMergeSubgroup_ContradictionVerdict(t *testing.T) {
+	newStorer := func() *reassignStorer {
+		m := pensionStorer()
+		m.stances[2] = StanceDocument{ID: 2, PersonID: 1, ClusterLabel: "âge de la retraite", ClusterEmbedding: []float32{1, 0}, FactCount: 1}
+		m.facts[2] = []StanceFactInfo{{ID: 20, NormalizedFactText: "veut la retraite à 64 ans"}}
+		return &reassignStorer{mockStanceStorer: m}
+	}
+	sub := MergeSubgroup{StanceIDs: []int64{1, 2}, Label: "retraites", Summary: "âge de départ"}
+
+	storer := newStorer()
+	sm, _ := newOutageManager(t, storer, answers(nil))
+	byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+	if _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(storer.judged) != 1 || storer.judged[0] != (JudgedPair{FactAID: 20, FactBID: 10, Contradiction: true}) {
+		t.Errorf("judged = %+v, want the pair 20-10 as a contradiction", storer.judged)
+	}
+
+	storer = newStorer()
+	sm, _ = newOutageManager(t, storer, answers(map[string]any{verifyPrompt: nil}))
+	byID = map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+	if _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil); !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if len(storer.judged) != 0 {
+		t.Errorf("judged = %+v, want no verdict for an analysis that did not end", storer.judged)
+	}
+}
+
+// TestApplyMergeSubgroup_BudgetCutGoesOn: the budget of the sweep stops the
+// analysis between two absorbed facts. Nothing is merged, the verdicts of
+// the facts analyzed are kept, and the next run asks only about the others.
+func TestApplyMergeSubgroup_BudgetCutGoesOn(t *testing.T) {
+	oneAnalysisSample(t)
+	storer := mergeStorer(stanceCompareFacts)
+	sm, o := newOutageManager(t, storer, answers(map[string]any{analyzePrompt: noContradiction}))
+	sub := MergeSubgroup{StanceIDs: []int64{1, 2}, Label: "retraites", Summary: "âge de départ"}
+
+	byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+	out, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, newCallBudget(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.cut || out.merged != 0 || out.analyzed != 1 || len(storer.merges) != 0 {
+		t.Fatalf("outcome = %+v merges = %v, want a cut after one fact and no merge", out, storer.merges)
+	}
+	if len(storer.judged) != stanceCompareFacts {
+		t.Fatalf("judged pairs = %d, want the %d of the fact analyzed", len(storer.judged), stanceCompareFacts)
+	}
+
+	byID = map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+	out, err = applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.cut || out.merged != 1 || out.analyzed != 1 {
+		t.Errorf("outcome = %+v, want the merge with the one fact left analyzed", out)
+	}
+	if n := o.count(analyzePrompt); n != 2 {
+		t.Errorf("analysis calls over both runs = %d, want 2: no fact is analyzed twice", n)
+	}
+}
+
+// TestStanceMergeSweep_CapCountsTheAnalysis: the calls of the analysis count
+// against MaxLLMCalls. A person the cap stops before its merge is not
+// memoized, and no further person starts.
+func TestStanceMergeSweep_CapCountsTheAnalysis(t *testing.T) {
+	oneAnalysisSample(t)
+	storer := &sweepStorer{reassignStorer: mergeStorer(stanceCompareFacts)}
+	const mergeDecision = "You are deciding which subsets of the listed stance documents"
+	sm, o := newOutageManager(t, storer, answers(map[string]any{
+		analyzePrompt: noContradiction,
+		mergeDecision: map[string]any{"reasoning": "stub", "merges": []map[string]any{{"stance_ids": []int64{1, 2}, "label": "retraites", "summary": "âge de départ"}}},
+	}))
+	opts := DefaultStanceMergeOptions
+	opts.MaxLLMCalls = 2 // the merge decision and one of the two absorbed facts
+	stats, err := RunStanceMergeSweep(context.Background(), storer, sm, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.PersonsProcessed != 1 || stats.LLMCalls != 2 || stats.StancesMerged != 0 || len(storer.memos) != 0 {
+		t.Errorf("stats=%+v memos=%v; want person 1 cut after 2 calls, unmerged and not memoized, person 2 not started", stats, storer.memos)
+	}
+	if n := o.count(analyzePrompt); n != 1 {
+		t.Errorf("analysis calls = %d, want 1", n)
+	}
+
+	// The next sweep, without a cap here, ends the merge and memoizes.
+	opts.MaxLLMCalls = 0
+	stats, err = RunStanceMergeSweep(context.Background(), storer, sm, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.StancesMerged != 1 || len(storer.memos) == 0 || storer.memos[0] != 1 {
+		t.Errorf("stats=%+v memos=%v; want the merge of person 1 and its memo", stats, storer.memos)
+	}
+	if n := o.count(analyzePrompt); n != 2 {
+		t.Errorf("analysis calls over both sweeps = %d, want 2", n)
 	}
 }

@@ -40,9 +40,12 @@ const (
 	// refreshBudget caps how many stances a pass brings up to date (one LLM
 	// call each).
 	refreshBudget = 2000
-	// mergeBudget caps the LLM calls of the stance merge sweep of a pass:
-	// after a fold or a large backfill most persons need a sweep, and the
-	// sweep over all of them held the pass for more than 10 h.
+	// mergeBudget caps the LLM calls of the stance merge sweep of a pass, the
+	// analysis of the merged facts included: after a fold or a large backfill
+	// most persons need a sweep, and the sweep over all of them held the pass
+	// for more than 10 h. While the analysis was outside the cap, it took the
+	// seats of every pass and the detection after it never ran (2026-11-18
+	// to 11-27). A sweep cut at the cap goes on at the next pass.
 	mergeBudget = 2000
 	// foldBudget caps the grouping gate calls of the fold sweep of a pass
 	// (two calls per pair at most, both orders).

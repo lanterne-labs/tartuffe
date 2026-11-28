@@ -436,6 +436,50 @@ func (s *PostgresStorer) GetClosestFactsForStance(ctx context.Context, stanceID 
 	return scanStanceFactInfos(rows, stanceID)
 }
 
+// ClosestUnjudgedFacts returns, among the limit facts of the stances
+// stanceIDs nearest to the fact factID, those whose pair with it has no
+// verdict (fact_pair_checks, whatever the rulebook), nearest first. The stance
+// merge analyzes an absorbed fact against them: a fact whose nearest pairs
+// all have a verdict gets none, and costs no call. A fact without an
+// embedding gets the facts in no order.
+func (s *PostgresStorer) ClosestUnjudgedFacts(ctx context.Context, factID int64, stanceIDs []int64, limit int) ([]core.StanceFactInfo, error) {
+	query := `
+		WITH near AS (
+			SELECT f.id, f.fact_text, COALESCE(f.embedding_text, '') AS embedding_text,
+			       COALESCE(f.canonical_verb, '') AS canonical_verb, COALESCE(f.lang, '') AS lang,
+			       (SELECT MIN(fs.published_at) FROM fact_sources fs WHERE fs.fact_id = f.id) AS published_at,
+			       f.statement_date::timestamp AT TIME ZONE 'UTC' AS statement_date, f.statement_date_precision,
+			       f.embedding <=> (SELECT embedding FROM facts WHERE id = $1) AS distance
+			FROM facts f
+			JOIN stance_document_facts sdf ON f.id = sdf.fact_id
+			WHERE sdf.stance_document_id = ANY($2)
+			  AND f.id <> $1
+			  AND NOT EXISTS (
+			      SELECT 1 FROM fact_relations fr
+			      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+			  )
+			ORDER BY distance, f.id
+			LIMIT $3
+		)
+		SELECT id, fact_text, embedding_text, canonical_verb, lang, published_at, statement_date, statement_date_precision
+		FROM near
+		WHERE NOT EXISTS (
+		    SELECT 1 FROM fact_pair_checks pc
+		    WHERE pc.fact_a_id = LEAST($1, near.id) AND pc.fact_b_id = GREATEST($1, near.id)
+		)
+		ORDER BY distance, id`
+	rows, err := s.pool.Query(ctx, query, factID, stanceIDs, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying the unjudged facts nearest to fact %d: %w", factID, err)
+	}
+	defer rows.Close()
+	facts, err := scanStanceFactInfos(rows, 0)
+	if err != nil {
+		return nil, fmt.Errorf("the unjudged facts nearest to fact %d: %w", factID, err)
+	}
+	return facts, nil
+}
+
 // GetFactsForStance retrieves all facts associated with a stance document.
 func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error) {
 	query := `

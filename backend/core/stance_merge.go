@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -40,6 +41,13 @@ type StanceMergeStorer interface {
 	// RecordStanceLookup memoizes one.
 	GetStanceLookups(ctx context.Context, fingerprints map[int64]string) (map[int64]int64, error)
 	RecordStanceLookup(ctx context.Context, stanceID int64, fingerprint string, namedID int64) error
+	// ClosestUnjudgedFacts returns, among the limit facts of the stances
+	// stanceIDs nearest to the fact factID, those whose pair with it has no
+	// verdict yet.
+	ClosestUnjudgedFacts(ctx context.Context, factID int64, stanceIDs []int64, limit int) ([]StanceFactInfo, error)
+	// RecordJudgedPairs records the verdict of the stance analysis on pairs
+	// of facts, under the rulebook judgeHash.
+	RecordJudgedPairs(ctx context.Context, personID int64, judgeHash string, pairs []JudgedPair) error
 }
 
 // StanceMergeOptions tunes the per-person merge and the sweep over persons.
@@ -66,9 +74,12 @@ type StanceMergeOptions struct {
 	// MaxPersons caps how many candidate persons RunStanceMergeSweep processes
 	// (0 = all), taken in the order storage lists them. Bounded smoke runs use it.
 	MaxPersons int
-	// MaxLLMCalls is the number of LLM calls after which the sweep starts no
-	// new person (0 = no cap); the persons left stay pending for the next
-	// sweep. The maintenance pass uses it to stay short.
+	// MaxLLMCalls caps the LLM calls of the sweep (0 = no cap): the gates, the
+	// merge decisions and the analysis of the absorbed facts. At the cap the
+	// sweep starts no new person, and a person it is on stops before its next
+	// merge or its next absorbed fact; they stay pending for the next sweep,
+	// which goes on from the verdicts recorded (ClosestUnjudgedFacts). The
+	// maintenance pass uses it to stay short.
 	MaxLLMCalls int64
 }
 
@@ -115,9 +126,12 @@ const allStancesLLMCap = 8
 
 // PersonMergeStats are the counters of one person's merge pass.
 type PersonMergeStats struct {
-	Skipped                  bool // fewer than 2 stances
+	Skipped bool // fewer than 2 stances
+	// Cut is set when the sweep's cap on LLM calls stopped the person before
+	// its last merge: the person is not memoized.
+	Cut                      bool
 	CandidateClusters        int64
-	LLMCalls                 int64
+	LLMCalls                 int64 // gates, merge decisions and analyzed facts
 	LLMFailures              int64
 	StancesMerged            int64 // number of src stances folded away
 	SubgroupsApplied         int64 // number of merge subgroups actually applied
@@ -141,10 +155,37 @@ type StanceMergeSweepStats struct {
 	PostMergeAnalyzeFailures int64
 }
 
-// Add folds one person's counters into the sweep totals.
 // mergeMaxConsecutiveFailures is how many LLM failures in a row stop a merge run.
 const mergeMaxConsecutiveFailures = 3
 
+// callBudget is the cap of a sweep on its LLM calls, shared by the persons
+// that run at once. A nil budget is no cap.
+type callBudget struct {
+	max  int64
+	used atomic.Int64
+}
+
+// newCallBudget returns the budget of max calls, nil (no cap) when max is 0.
+func newCallBudget(max int64) *callBudget {
+	if max <= 0 {
+		return nil
+	}
+	return &callBudget{max: max}
+}
+
+// spend counts n calls.
+func (b *callBudget) spend(n int64) {
+	if b != nil {
+		b.used.Add(n)
+	}
+}
+
+// spent reports whether the cap is reached.
+func (b *callBudget) spent() bool {
+	return b != nil && b.used.Load() >= b.max
+}
+
+// Add folds one person's counters into the sweep totals.
 func (s *StanceMergeSweepStats) Add(ps PersonMergeStats) {
 	s.PersonsProcessed++
 	if ps.Skipped {
@@ -176,7 +217,7 @@ func MergeRulebookKey(opts StanceMergeOptions) string {
 // with at least two stances whose stance set changed since it was last judged
 // (capped by opts.MaxPersons and opts.MaxLLMCalls), LLM-vets the candidate clusters, applies the
 // merges, and re-detects contradictions across the previously-fragmented
-// facts. A person judged without LLM failures is memoized under the current
+// facts. A person judged to its end without LLM failures is memoized under the current
 // stance fingerprint and rulebook (RecordMergeSweep), so unchanged persons
 // cost the sweep nothing the next night. A per-person failure is logged and
 // skipped, and stays pending. The sweep stops at the first call the LLM could
@@ -199,19 +240,17 @@ func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *Stan
 	}
 
 	// The persons are independent: they run as many at once as the endpoint
-	// serves.
+	// serves, under one budget of LLM calls.
+	budget := newCallBudget(opts.MaxLLMCalls)
 	var mu sync.Mutex
 	err = llm.ForEach(ctx, persons, func(ctx context.Context, p PersonRecord) error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("stance merge sweep stopped: %w", err)
 		}
-		mu.Lock()
-		over := opts.MaxLLMCalls > 0 && stats.LLMCalls >= opts.MaxLLMCalls
-		mu.Unlock()
-		if over {
+		if budget.spent() {
 			return nil
 		}
-		ps, perr := MergeStancesForPerson(ctx, storer, sm, p, opts)
+		ps, perr := mergeStancesForPerson(ctx, storer, sm, p, opts, budget)
 		mu.Lock()
 		stats.Add(ps)
 		mu.Unlock()
@@ -229,8 +268,9 @@ func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *Stan
 		}
 		// A failed LLM call means a candidate went unjudged: leave the person
 		// pending so the next sweep asks again. Dry runs judge without
-		// applying, so their answer must not be memoized either.
-		if ps.LLMFailures > 0 || opts.DryRun {
+		// applying, so their answer must not be memoized either. A person the
+		// cap stopped has merges left.
+		if ps.LLMFailures > 0 || opts.DryRun || ps.Cut {
 			return nil
 		}
 		if err := storer.RecordMergeSweep(ctx, p.ID, key); err != nil {
@@ -247,6 +287,7 @@ func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *Stan
 		Int("pending", pending).
 		Int64("persons_processed", stats.PersonsProcessed).
 		Int64("llm_calls", stats.LLMCalls).
+		Bool("cut_at_cap", budget.spent()).
 		Int64("stances_merged", stats.StancesMerged).
 		Int64("post_merge_contradictions", stats.PostMergeContradictions).
 		Int64("post_merge_analyze_failures", stats.PostMergeAnalyzeFailures).
@@ -265,6 +306,20 @@ func MergeStancesForPerson(
 	stanceManager *StanceManager,
 	p PersonRecord,
 	opts StanceMergeOptions,
+) (PersonMergeStats, error) {
+	return mergeStancesForPerson(ctx, storer, stanceManager, p, opts, nil)
+}
+
+// mergeStancesForPerson is MergeStancesForPerson under the budget of LLM
+// calls of a sweep (nil: no cap). When the budget runs out the person stops
+// before its next merge and the stats say so (Cut).
+func mergeStancesForPerson(
+	ctx context.Context,
+	storer StanceMergeStorer,
+	stanceManager *StanceManager,
+	p PersonRecord,
+	opts StanceMergeOptions,
+	budget *callBudget,
 ) (PersonMergeStats, error) {
 	var ps PersonMergeStats
 
@@ -320,6 +375,7 @@ func MergeStancesForPerson(
 			lookupPairs, luCalls, luFails, err = lookupFragments(ctx, storer, stanceManager, p.Name, docs, opts, !opts.DryRun)
 			ps.LLMCalls += int64(luCalls)
 			ps.LLMFailures += int64(luFails)
+			budget.spend(int64(luCalls))
 			if err != nil {
 				return ps, err
 			}
@@ -340,6 +396,7 @@ func MergeStancesForPerson(
 		candidateClusters, pwCalls, pwFails, err = pairwiseGroupStances(ctx, stanceManager, p.Name, docs, opts.RecallSim, labelPairs, lookupPairs, factsOf)
 		ps.LLMCalls += int64(pwCalls)
 		ps.LLMFailures += int64(pwFails)
+		budget.spend(int64(pwCalls))
 		if err != nil {
 			return ps, err
 		}
@@ -352,6 +409,10 @@ func MergeStancesForPerson(
 	ps.CandidateClusters = int64(len(candidateClusters))
 
 	for _, cluster := range candidateClusters {
+		if ps.Cut || budget.spent() {
+			ps.Cut = true
+			break
+		}
 		// Re-load every iteration: previous merges may have removed/altered IDs.
 		current, err := storer.GetStanceDocumentsForPerson(ctx, p.ID)
 		if err != nil {
@@ -399,6 +460,7 @@ func MergeStancesForPerson(
 			subgroups = []MergeSubgroup{{StanceIDs: ids}}
 		} else {
 			ps.LLMCalls++
+			budget.spend(1)
 			decision, err := stanceManager.MergeClusterDecision(ctx, p.Name, live)
 			if errors.Is(err, llm.ErrUnavailable) {
 				return ps, err
@@ -415,15 +477,22 @@ func MergeStancesForPerson(
 		}
 
 		for _, sub := range subgroups {
-			merged, contradictions, analyzeFailures, err := applyMergeSubgroup(ctx, storer, stanceManager, p.ID, byID, sub)
-			if merged > 0 {
+			out, err := applyMergeSubgroup(ctx, storer, stanceManager, p.ID, byID, sub, budget)
+			if out.merged > 0 {
 				ps.SubgroupsApplied++
-				ps.StancesMerged += int64(merged)
+				ps.StancesMerged += int64(out.merged)
 			}
-			ps.PostMergeContradictions += int64(contradictions)
-			ps.PostMergeAnalyzeFailures += int64(analyzeFailures)
+			ps.LLMCalls += int64(out.analyzed)
+			ps.PostMergeContradictions += int64(out.contradictions)
+			ps.PostMergeAnalyzeFailures += int64(out.analyzeFailures)
 			if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
 				return ps, err
+			}
+			if out.cut {
+				// The cap of the sweep: the subgroup is not merged, and the
+				// next sweep proposes it again.
+				ps.Cut = true
+				break
 			}
 			if err != nil {
 				// The subgroup is left unmerged; counted as a failure so the
@@ -440,6 +509,7 @@ func MergeStancesForPerson(
 		Int64("candidate_clusters", ps.CandidateClusters).
 		Int64("llm_calls", ps.LLMCalls).
 		Int64("llm_failures", ps.LLMFailures).
+		Bool("cut_at_cap", ps.Cut).
 		Int64("subgroups_applied", ps.SubgroupsApplied).
 		Int64("stances_merged", ps.StancesMerged).
 		Int64("post_merge_contradictions", ps.PostMergeContradictions).
@@ -661,24 +731,26 @@ func groupByConfirmedSimilarPairs(embeddings [][]float32, candidateSim float64, 
 // contradictions the analysis found, and finally regenerates the
 // destination's label + summary from the now-merged fact set.
 //
+// The analysis compares an absorbed fact with the facts of the other stances
+// of the subgroup nearest to it (stanceCompareFacts, one call), as the
+// insertion compares a new fact with its stance: against every fact of the
+// merged stance, one fact of a stance of 2,300 facts cost 58 calls, and the
+// analysis took the seats of whole maintenance passes (29,000 calls on
+// 2026-11-26, no detection since 2026-11-17). The verdict on each pair
+// compared is recorded (RecordJudgedPairs), so the detection does not judge
+// it again and a fact whose nearest pairs all have a verdict costs no call:
+// a subgroup cut during its analysis goes on from there.
+//
 // The analysis runs BEFORE the merge commits: a merge deletes its source
 // stances, after which nothing tells which facts still await their
-// cross-stance analysis. When the LLM is unavailable (llm.ErrUnavailable) or
-// ctx ends (the deadline of the phase), nothing is merged or recorded and the
-// error is returned; the subgroup is proposed again by the next sweep. Any
+// cross-stance analysis. When the LLM is unavailable (llm.ErrUnavailable),
+// ctx ends (the deadline of the phase) or the budget of the sweep runs out
+// (mergeOutcome.cut), nothing is merged and no contradiction is recorded;
+// the subgroup is proposed again by the next sweep. Any
 // other analysis failure only skips that fact's cross-stance check. A label + summary refresh that fails on an
 // unavailable LLM after the merge committed is returned too, with the
 // counts of the committed merge. Contradictions are recorded only for the
 // facts of the srcs whose merge committed, and only against facts now in dst.
-//
-// Returns:
-//
-//	merged          — number of source stances successfully folded into dst.
-//	contradictions  — number of new contradictions recorded by the post-merge
-//	                  re-analysis (these are cross-stance pairs that the
-//	                  per-fact assignTopic missed by splitting them).
-//	analyzeFailures — absorbed facts whose analysis failed (not for an
-//	                  unreachable LLM) and were merged unchecked.
 func applyMergeSubgroup(
 	ctx context.Context,
 	storer StanceMergeStorer,
@@ -686,9 +758,10 @@ func applyMergeSubgroup(
 	personID int64,
 	currentByID map[int64]StanceDocument,
 	sub MergeSubgroup,
-) (merged int, contradictions int, analyzeFailures int, err error) {
+	budget *callBudget,
+) (out mergeOutcome, err error) {
 	if len(sub.StanceIDs) < 2 {
-		return 0, 0, 0, nil
+		return out, nil
 	}
 
 	// Resolve: drop IDs that no longer exist (already merged).
@@ -699,7 +772,7 @@ func applyMergeSubgroup(
 		}
 	}
 	if len(live) < 2 {
-		return 0, 0, 0, nil
+		return out, nil
 	}
 
 	// Pick dst: largest fact_count, ties by smallest ID.
@@ -731,55 +804,88 @@ func applyMergeSubgroup(
 	}
 	sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID < srcs[j].ID })
 
-	// The merged fact set, dst's facts first, and the absorbed facts (those
-	// of the srcs, previously in a separate stance). dstFacts are the facts
-	// in dst once the merges below committed: a src whose merge fails keeps
-	// its facts, and no pair involving them is recorded.
-	allFacts, err := storer.GetFactsForStance(ctx, dst.ID)
+	// The facts of dst, and the absorbed facts (those of the srcs, previously
+	// in a separate stance). dstFacts are the facts in dst once the merges
+	// below committed: a src whose merge fails keeps its facts, and no pair
+	// involving them is recorded.
+	facts, err := storer.GetFactsForStance(ctx, dst.ID)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("loading facts of dst stance %d: %w", dst.ID, err)
+		return out, fmt.Errorf("loading facts of dst stance %d: %w", dst.ID, err)
 	}
-	dstFacts := make(map[int64]bool, len(allFacts))
-	for _, f := range allFacts {
+	dstFacts := make(map[int64]bool, len(facts))
+	for _, f := range facts {
 		dstFacts[f.ID] = true
 	}
 	absorbedBySrc := make(map[int64][]StanceFactInfo, len(srcs))
 	for _, src := range srcs {
 		facts, ferr := storer.GetFactsForStance(ctx, src.ID)
 		if ferr != nil {
-			return 0, 0, 0, fmt.Errorf("loading facts of src stance %d: %w", src.ID, ferr)
+			return out, fmt.Errorf("loading facts of src stance %d: %w", src.ID, ferr)
 		}
 		absorbedBySrc[src.ID] = facts
-		allFacts = append(allFacts, facts...)
 	}
 
-	// Re-detect contradictions: analyze each absorbed fact against the merged
-	// stance's other facts. Recording is idempotent on (fact_a_id, fact_b_id),
-	// so re-analyzing a pair already detected within its original stance is
-	// safe. A fact whose analysis fails for another reason than an
-	// unreachable LLM or a cut context is merged without its cross-stance
-	// check (counted).
+	// Re-detect contradictions: analyze each absorbed fact against the facts
+	// of the other stances of the subgroup nearest to it, those without a
+	// verdict. Recording is idempotent on (fact_a_id, fact_b_id). A fact
+	// whose analysis fails for another reason than an unreachable LLM or a
+	// cut context is merged without its cross-stance check (counted).
 	analysisStance := StanceDocument{ID: dst.ID, PersonID: dst.PersonID, ClusterLabel: sub.Label, Summary: sub.Summary}
 	found := make(map[int64][]StanceContradictionEntry)
+	compared := make(map[int64][]StanceFactInfo)
+	// recordJudged records the verdicts of the analysis so far. recorded
+	// reports whether the contradiction of a pair is stored: a pair with a
+	// contradiction that is not stored gets no verdict and is judged again.
+	recordJudged := func(recorded func(factID, otherID int64) bool) {
+		pairs := judgedPairsOfAnalysis(compared, found, recorded)
+		if len(pairs) == 0 {
+			return
+		}
+		// The verdicts are paid for: a context cut by the phase or a deploy
+		// must not lose them.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if rErr := storer.RecordJudgedPairs(rctx, personID, StanceJudgeHash(), pairs); rErr != nil {
+			log.Warn().Err(rErr).Int64("dst", dst.ID).Int("pairs", len(pairs)).Msg("Post-merge analysis: the judged pairs were not recorded")
+		}
+	}
+	none := func(int64, int64) bool { return false }
 	for _, src := range srcs {
-		for _, fact := range absorbedBySrc[src.ID] {
-			others := make([]StanceFactInfo, 0, len(allFacts)-1)
-			for _, f := range allFacts {
-				if f.ID != fact.ID {
-					others = append(others, f)
-				}
+		others := make([]int64, 0, len(live)-1)
+		for _, d := range live {
+			if d.ID != src.ID {
+				others = append(others, d.ID)
 			}
-			entries, aErr := stanceManager.verifiedContradictionsInStance(ctx, analysisStance, fact, others)
+		}
+		for _, fact := range absorbedBySrc[src.ID] {
+			if budget.spent() {
+				recordJudged(none)
+				out.cut = true
+				return out, nil
+			}
+			near, nErr := storer.ClosestUnjudgedFacts(ctx, fact.ID, others, stanceCompareFacts)
+			if nErr != nil {
+				recordJudged(none)
+				return out, fmt.Errorf("loading the facts nearest to fact %d: %w", fact.ID, nErr)
+			}
+			if len(near) == 0 {
+				continue
+			}
+			out.analyzed++
+			budget.spend(1)
+			entries, aErr := stanceManager.verifiedContradictionsInStance(ctx, analysisStance, fact, near)
 			if errors.Is(aErr, llm.ErrUnavailable) || ctx.Err() != nil {
 				// An unreachable LLM, or the deadline of the phase: nothing is
 				// merged, and the next sweep proposes the subgroup again.
-				return 0, 0, 0, fmt.Errorf("post-merge analysis of fact %d: %w", fact.ID, aErr)
+				recordJudged(none)
+				return out, fmt.Errorf("post-merge analysis of fact %d: %w", fact.ID, aErr)
 			}
 			if aErr != nil {
 				log.Warn().Err(aErr).Int64("dst", dst.ID).Int64("fact_id", fact.ID).Msg("Post-merge analysis failed; fact merged unchecked")
-				analyzeFailures++
+				out.analyzeFailures++
 				continue
 			}
+			compared[fact.ID] = near
 			found[fact.ID] = entries
 		}
 	}
@@ -790,7 +896,7 @@ func applyMergeSubgroup(
 			log.Warn().Err(mErr).Int64("src", src.ID).Int64("dst", dst.ID).Msg("MergeStancesForPerson failed; subgroup partial")
 			continue
 		}
-		merged++
+		out.merged++
 		mergedSrcs = append(mergedSrcs, src)
 		for _, f := range absorbedBySrc[src.ID] {
 			dstFacts[f.ID] = true
@@ -800,21 +906,25 @@ func applyMergeSubgroup(
 		delete(currentByID, src.ID)
 	}
 
-	if merged == 0 {
-		return 0, 0, analyzeFailures, nil
+	if out.merged == 0 {
+		recordJudged(none)
+		return out, nil
 	}
 
+	stored := map[[2]int64]bool{}
 	for _, src := range mergedSrcs {
 		for _, fact := range absorbedBySrc[src.ID] {
 			var inDst []StanceContradictionEntry
 			for _, e := range found[fact.ID] {
 				if dstFacts[e.KeyFactID] {
 					inDst = append(inDst, e)
+					stored[[2]int64{fact.ID, e.KeyFactID}] = true
 				}
 			}
-			contradictions += stanceManager.recordStanceContradictions(ctx, personID, fact.ID, dst.ID, inDst)
+			out.contradictions += stanceManager.recordStanceContradictions(ctx, personID, fact.ID, dst.ID, inDst)
 		}
 	}
+	recordJudged(func(factID, otherID int64) bool { return stored[[2]int64{factID, otherID}] })
 
 	// Refresh dst's in-memory view: centroid is updated by MergeStancesForPerson,
 	// fact_count grows. Use the LLM's proposed summary as a placeholder; we
@@ -846,7 +956,7 @@ func applyMergeSubgroup(
 		// The merge is committed; an unavailable LLM still stops the sweep
 		// (the absorbed facts stay pending for the next refresh).
 		if errors.Is(rErr, llm.ErrUnavailable) {
-			return merged, contradictions, analyzeFailures, fmt.Errorf("refreshing merged stance %d: %w", dst.ID, rErr)
+			return out, fmt.Errorf("refreshing merged stance %d: %w", dst.ID, rErr)
 		}
 	} else {
 		// Refresh succeeded; we don't know the new label/summary text, so
@@ -857,7 +967,51 @@ func applyMergeSubgroup(
 		currentByID[dst.ID] = updatedDst
 	}
 
-	return merged, contradictions, analyzeFailures, nil
+	return out, nil
+}
+
+// mergeOutcome is what applyMergeSubgroup did.
+type mergeOutcome struct {
+	// merged is the number of source stances folded into dst.
+	merged int
+	// contradictions is the number of new contradictions the analysis
+	// recorded: cross-stance pairs the insertion missed by splitting them.
+	contradictions int
+	// analyzeFailures counts the absorbed facts whose analysis failed (not
+	// for an unreachable LLM) and were merged unchecked.
+	analyzeFailures int
+	// analyzed counts the absorbed facts the analysis asked the LLM about.
+	analyzed int
+	// cut is set when the budget of the sweep ran out during the analysis:
+	// nothing is merged.
+	cut bool
+}
+
+// judgedPairsOfAnalysis is the verdict of the post-merge analysis on the
+// pairs it compared: compared lists, per absorbed fact, the facts it was
+// analyzed against, found the contradictions kept for it. A pair without a
+// contradiction is judged "no". A pair with one is judged "yes" when recorded
+// says its contradiction is stored, and left out otherwise: it is judged
+// again.
+func judgedPairsOfAnalysis(compared map[int64][]StanceFactInfo, found map[int64][]StanceContradictionEntry, recorded func(factID, otherID int64) bool) []JudgedPair {
+	var pairs []JudgedPair
+	for factID, others := range compared {
+		flagged := map[int64]bool{}
+		for _, e := range found[factID] {
+			flagged[e.KeyFactID] = true
+		}
+		for _, o := range others {
+			if o.ID == factID || o.ID <= 0 {
+				continue
+			}
+			if !flagged[o.ID] {
+				pairs = append(pairs, JudgedPair{FactAID: factID, FactBID: o.ID})
+			} else if recorded(factID, o.ID) {
+				pairs = append(pairs, JudgedPair{FactAID: factID, FactBID: o.ID, Contradiction: true})
+			}
+		}
+	}
+	return pairs
 }
 
 // sameSubjectLabelPrompt is the strict gate for label-similar stance pairs.
